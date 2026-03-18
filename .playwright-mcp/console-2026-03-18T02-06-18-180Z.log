@@ -1,0 +1,2 @@
+[     105ms] [ERROR] Failed to load resource: the server responded with a status of 404 (Not Found) @ http://localhost:8501/condominios/_stcore/health:0
+[     112ms] [ERROR] Failed to load resource: the server responded with a status of 404 (Not Found) @ http://localhost:8501/condominios/_stcore/host-config:0
