@@ -279,9 +279,9 @@ TABLE_FORMS_EMPTY_CSS = """
 /* ── BOTONES: solución definitiva texto blanco ─────────────────────────────── */
 /* Cubrir absolutamente todos los botones primarios */
 button[kind="primary"],
+button[kind="primaryFormSubmit"],
 button[data-testid="baseButton-primary"],
 .stButton > button[kind="primary"],
-div[data-testid="stButton"] button,
 div[data-testid="stFormSubmitButton"] button {
     background-color: #1B4F72 !important;
     color: #FFFFFF !important;
@@ -290,7 +290,10 @@ div[data-testid="stFormSubmitButton"] button {
 }
 
 button[kind="primary"]:hover,
-div[data-testid="stButton"] button:hover {
+button[kind="primaryFormSubmit"]:hover,
+button[data-testid="baseButton-primary"]:hover,
+.stButton > button[kind="primary"]:hover,
+div[data-testid="stFormSubmitButton"] button:hover {
     background-color: #2E86C1 !important;
     color: #FFFFFF !important;
 }

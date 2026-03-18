@@ -78,8 +78,14 @@ class UsuarioRepository:
             if not auth_resp.user:
                 raise AuthError("No se pudo crear el usuario en Supabase Auth.")
         except Exception as e:
-            err = str(e)
-            if "already registered" in err.lower() or "already exists" in err.lower():
+            err = str(e) if not isinstance(e, str) else e
+            err_l = err.lower() if isinstance(err, str) else ""
+            if "service_key" in err_l or "service role" in err_l:
+                raise DatabaseError(
+                    "Falta configurar SUPABASE_SERVICE_KEY (service_role) en Secrets/.env "
+                    "para poder crear usuarios en Supabase Auth."
+                )
+            if "already registered" in err_l or "already exists" in err_l:
                 raise DatabaseError("Ya existe un usuario registrado con ese correo.")
             raise DatabaseError(f"Error al crear usuario en Auth: {err}")
 
