@@ -13,55 +13,72 @@ def render_header() -> None:
     from components.sidebar import GLOBAL_CSS, render_sidebar
     from components.styles import inject_global_styles
 
-    # Mantener inyección de estilos + sidebar del sistema
+    # Inyectar CSS global y sidebar
     st.markdown(GLOBAL_CSS, unsafe_allow_html=True)
     inject_global_styles()
     render_sidebar()
 
-    condominio = st.session_state.get("condominio_nombre", "Sin condominio")
-    mes = format_mes_proceso(st.session_state.get("mes_proceso")) or st.session_state.get("mes_proceso", "")
-    tasa = st.session_state.get("tasa_cambio", "0.00")
-    email = st.session_state.get("user_email", "")
-    rol = st.session_state.get("user_role", "")
+    condominio = (st.session_state.get("condominio_nombre") or "") or ""
+    raw_mes = st.session_state.get("mes_proceso", "") or ""
+    mes = format_mes_proceso(raw_mes) or raw_mes
+    tasa = st.session_state.get("tasa_cambio", 0)
+    email = (st.session_state.get("user_email") or "") or ""
+    rol = (st.session_state.get("user_role") or "") or ""
+    es_admin = rol.lower() == "admin"
 
-    # Header en una fila: [nombre + métricas] | [Cambiar] con mismo fondo azul
-    st.markdown('<div class="header-bar-marker"></div>', unsafe_allow_html=True)
-    col_content, col_btn = st.columns([7, 1])
-    with col_content:
-        st.markdown(
-            f"""
-            <div style="display:flex; justify-content:space-between; align-items:center; width:100%;">
-                <div style="display:flex; align-items:center; gap:10px;">
-                    <span style="font-size:24px;">🏢</span>
-                    <span style="color:#fff; font-size:18px; font-weight:700;">{condominio}</span>
+    st.markdown(
+        f"""
+        <div style="background:#1B4F72;padding:14px 24px;
+        border-radius:10px;margin-bottom:16px;
+        display:flex;justify-content:space-between;
+        align-items:center;">
+            <div style="display:flex;align-items:center;
+            gap:10px;">
+                <span style="font-size:22px;">🏢</span>
+                <span style="color:#fff;font-size:18px;
+                font-weight:700;">{condominio}</span>
+            </div>
+            <div style="display:flex;gap:24px;
+            align-items:center;">
+                <div style="text-align:center;
+                border-left:1px solid #2E86C1;
+                padding-left:20px;">
+                    <div style="color:#AED6F1;font-size:10px;
+                    text-transform:uppercase;">
+                    Mes en Proceso</div>
+                    <div style="color:#fff;font-weight:600;">
+                    {mes}</div>
                 </div>
-                <div style="display:flex; gap:28px; align-items:center;">
-                    <div style="text-align:center; border-left:1px solid #2E86C1; padding-left:24px;">
-                        <div style="color:#AED6F1; font-size:10px; text-transform:uppercase;">Mes en Proceso</div>
-                        <div style="color:#fff; font-weight:600;">{mes}</div>
-                    </div>
-                    <div style="text-align:center; border-left:1px solid #2E86C1; padding-left:24px;">
-                        <div style="color:#AED6F1; font-size:10px; text-transform:uppercase;">Tasa BCV</div>
-                        <div style="color:#fff; font-weight:600;">Bs. {tasa}</div>
-                    </div>
-                    <div style="text-align:center; border-left:1px solid #2E86C1; padding-left:24px;">
-                        <div style="color:#AED6F1; font-size:10px; text-transform:uppercase;">Usuario</div>
-                        <div style="color:#fff; font-weight:600;">
-                            {email} <span style="background:#28B463; color:#fff; padding:2px 8px; border-radius:12px; font-size:11px; margin-left:6px;">{rol}</span>
-                        </div>
-                    </div>
+                <div style="text-align:center;
+                border-left:1px solid #2E86C1;
+                padding-left:20px;">
+                    <div style="color:#AED6F1;font-size:10px;
+                    text-transform:uppercase;">Tasa BCV</div>
+                    <div style="color:#fff;font-weight:600;">
+                    Bs. {tasa}</div>
+                </div>
+                <div style="text-align:center;
+                border-left:1px solid #2E86C1;
+                padding-left:20px;">
+                    <div style="color:#AED6F1;font-size:10px;
+                    text-transform:uppercase;">Usuario</div>
+                    <div style="color:#fff;font-weight:600;">
+                    {email}
+                    <span style="background:#28B463;color:#fff;
+                    padding:2px 8px;border-radius:12px;
+                    font-size:11px;margin-left:6px;">
+                    {rol}</span></div>
                 </div>
             </div>
-            """,
-            unsafe_allow_html=True,
-        )
-    with col_btn:
-        if st.session_state.get("user_role") == "admin":
-            if st.button("🔄 Cambiar", key="btn_cambiar"):
-                st.session_state.show_condominio_switcher = True
-                st.rerun()
-        else:
-            st.markdown("<div style='height:36px'></div>", unsafe_allow_html=True)
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    if es_admin:
+        if st.button("🔄 Cambiar condominio", key="btn_cambiar_header"):
+            st.session_state.show_condominio_switcher = True
+            st.rerun()
 
     # 4 — Selector de condominio (admin: tras "Cambiar" o tras login)
     if st.session_state.get("user_role") == "admin" and st.session_state.get("show_condominio_switcher", False):

@@ -276,57 +276,22 @@ TABLE_FORMS_EMPTY_CSS = """
     font-weight: 600 !important;
 }
 
-/* ── BOTONES: fix definitivo texto blanco en primarios (selectores Streamlit) ── */
-/* Forzar texto blanco en TODOS los botones primarios */
-div[data-testid="stButton"] > button[kind="primaryFormSubmit"],
-div[data-testid="stButton"] > button[kind="primary"],
-div[data-testid="stButton"] > button {
-    color: #FFFFFF !important;
-    font-weight: 600 !important;
-}
-
-/* Botón + Nuevo específicamente */
-div[data-testid="stButton"] > button:first-child {
+/* ── BOTONES: solución definitiva texto blanco ─────────────────────────────── */
+/* Cubrir absolutamente todos los botones primarios */
+button[kind="primary"],
+button[data-testid="baseButton-primary"],
+.stButton > button[kind="primary"],
+div[data-testid="stButton"] button,
+div[data-testid="stFormSubmitButton"] button {
     background-color: #1B4F72 !important;
-    color: #FFFFFF !important;
-    border: none !important;
-}
-
-/* Secundarios y disabled (no primarios) */
-div[data-testid="stForm"] button[kind="secondaryFormSubmit"],
-div[data-testid="stButton"] > button:not([kind="primary"]):not([kind="primaryFormSubmit"]) {
-    background: #FFFFFF !important;
-    color: #2C3E50 !important;
-    border: 1px solid #D5D8DC !important;
-    font-weight: 500 !important;
-}
-div[data-testid="stButton"] > button:not([kind="primary"]):not([kind="primaryFormSubmit"]):hover {
-    background: #F4F6F7 !important;
-    border-color: #1B4F72 !important;
-    color: #1B4F72 !important;
-}
-div[data-testid="stButton"] > button:disabled {
-    opacity: 0.6 !important;
-    cursor: not-allowed !important;
-}
-
-/* Botones base de Streamlit marcados como primarios (refuerzo adicional) */
-button[data-testid="baseButton-primary"] {
-    color: #FFFFFF !important;
-    background-color: #1B4F72 !important;
-}
-
-/* Botón + Nuevo en record_table: forzar blanco sobre azul */
-.record-table-bar-nuevo .stButton > button,
-.record-table-bar-nuevo div[data-testid="stButton"] > button {
-    background: #1B4F72 !important;
     color: #FFFFFF !important;
     border: none !important;
     font-weight: 600 !important;
 }
-.record-table-bar-nuevo .stButton > button:hover,
-.record-table-bar-nuevo div[data-testid="stButton"] > button:hover {
-    background: #154360 !important;
+
+button[kind="primary"]:hover,
+div[data-testid="stButton"] button:hover {
+    background-color: #2E86C1 !important;
     color: #FFFFFF !important;
 }
 

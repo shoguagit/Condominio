@@ -1,6 +1,7 @@
 from supabase import Client
 
 from utils.error_handler import safe_db_operation, AuthError, DatabaseError
+from config.supabase_client import get_admin_client
 
 
 class UsuarioRepository:
@@ -68,7 +69,8 @@ class UsuarioRepository:
 
         # 1. Crear en Supabase Auth (service_role puede crear usuarios directamente)
         try:
-            auth_resp = self.client.auth.admin.create_user({
+            admin_client = get_admin_client()
+            auth_resp = admin_client.auth.admin.create_user({
                 "email":            email,
                 "password":         password,
                 "email_confirm":    True,
@@ -113,18 +115,19 @@ class UsuarioRepository:
     def change_password(self, email: str, new_password: str) -> bool:
         """
         Cambia la contraseña del usuario en Supabase Auth.
-        Requiere que el cliente esté inicializado con service_role key.
+        Usa siempre un cliente inicializado con service_role key.
         """
         try:
             # Obtener el user_id de Auth por email
-            users_resp = self.client.auth.admin.list_users()
+            admin_client = get_admin_client()
+            users_resp = admin_client.auth.admin.list_users()
             auth_user  = next(
                 (u for u in users_resp if u.email == email), None
             )
             if not auth_user:
                 raise AuthError("Usuario no encontrado en Supabase Auth.")
 
-            self.client.auth.admin.update_user_by_id(
+            admin_client.auth.admin.update_user_by_id(
                 auth_user.id,
                 {"password": new_password},
             )
@@ -143,10 +146,11 @@ class UsuarioRepository:
 
         # Eliminar de Auth
         try:
-            users_resp = self.client.auth.admin.list_users()
+            admin_client = get_admin_client()
+            users_resp = admin_client.auth.admin.list_users()
             auth_user  = next((u for u in users_resp if u.email == email), None)
             if auth_user:
-                self.client.auth.admin.delete_user(auth_user.id)
+                admin_client.auth.admin.delete_user(auth_user.id)
         except Exception:
             pass  # Si falla Auth, el registro de BD ya fue eliminado
 

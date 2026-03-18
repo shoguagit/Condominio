@@ -93,43 +93,45 @@ if not st.session_state.authenticated:
         unsafe_allow_html=True,
     )
 
-    # Un solo card: cabecera + formulario dentro
-    st.markdown(
-        """
-        <div style="
-            background: white;
-            border-radius: 16px;
-            padding: 40px;
-            box-shadow: 0 4px 24px rgba(0,0,0,0.10);
-            max-width: 420px;
-            margin: auto;
-            text-align: center;
-        ">
-            <div style="font-size:56px; margin-bottom:8px;">🏢</div>
-            <h2 style="color:#1B4F72; margin:0 0 4px 0;">
-                Sistema de Condominio</h2>
-            <p style="color:#6B7280; margin:0 0 28px 0; font-size:14px;">
-                Acceso seguro para administradores y juntas</p>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
+    # Un solo card centrado (max-width 420px) con logo + formulario
+    col1, col2, col3 = st.columns([1, 2, 1])
+    with col2:
+        st.markdown(
+            """
+            <div style="
+                background: white;
+                border-radius: 16px;
+                padding: 40px;
+                box-shadow: 0 4px 24px rgba(0,0,0,0.10);
+                max-width: 420px;
+                margin: auto;
+                text-align: center;
+            ">
+                <div style="font-size:56px; margin-bottom:8px;">🏢</div>
+                <h2 style="color:#1B4F72; margin:0 0 4px 0;">
+                    Sistema de Condominio</h2>
+                <p style="color:#6B7280; margin:0 0 28px 0; font-size:14px;">
+                    Acceso seguro para administradores y juntas</p>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
 
-    with st.form("login_form", clear_on_submit=False):
-        email    = st.text_input("Correo electrónico", placeholder="usuario@email.com")
-        password = st.text_input(
-            "Contraseña",
-            type="password",
-            placeholder="••••••••",
-            key="login_password",
-            autocomplete="new-password",
-        )
-        st.markdown("<div style='height:4px'></div>", unsafe_allow_html=True)
-        submitted = st.form_submit_button(
-            "Ingresar →",
-            use_container_width=True,
-            type="primary",
-        )
+        with st.form("login_form", clear_on_submit=False):
+            email    = st.text_input("Correo electrónico", placeholder="usuario@email.com")
+            password = st.text_input(
+                "Contraseña",
+                type="password",
+                placeholder="••••••••",
+                key="login_password",
+                autocomplete="new-password",
+            )
+            st.markdown("<div style='height:4px'></div>", unsafe_allow_html=True)
+            submitted = st.form_submit_button(
+                "Ingresar →",
+                use_container_width=True,
+                type="primary",
+            )
 
     if submitted:
             if not email or not password:

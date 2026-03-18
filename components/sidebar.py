@@ -115,28 +115,6 @@ p  { font-size: 13px !important; color: #2C3E50; }
     background: #2E86C1;
     opacity: 0.9;
 }
-/* Header: fila con fondo azul; botón Cambiar integrado a la derecha */
-.header-bar-marker { display: none; }
-.header-bar-marker ~ div[data-testid="stHorizontalBlock"] {
-    background: #1B4F72 !important;
-    padding: 14px 24px !important;
-    border-radius: 10px !important;
-    margin-bottom: 8px !important;
-    align-items: center !important;
-}
-.header-bar-marker ~ div[data-testid="stHorizontalBlock"] div[data-testid="stButton"] > button {
-    background: transparent !important;
-    color: #AED6F1 !important;
-    border: 1px solid #AED6F1 !important;
-    font-size: 12px !important;
-    font-weight: 600 !important;
-}
-.header-bar-marker ~ div[data-testid="stHorizontalBlock"] div[data-testid="stButton"] > button:hover {
-    background: rgba(255,255,255,0.15) !important;
-    color: #FFFFFF !important;
-    border-color: #FFFFFF !important;
-}
-
 /* ── Labels de inputs — SIEMPRE oscuros y legibles ──── */
 label,
 .stTextInput  > label,
