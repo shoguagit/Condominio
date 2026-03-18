@@ -11,7 +11,7 @@ from components.header import render_header
 from components.breadcrumb import render_breadcrumb
 from utils.auth import check_authentication, require_condominio
 from utils.error_handler import DatabaseError
-from utils.validators import validate_periodo
+from utils.validators import validate_periodo, periodo_to_date_str
 
 
 st.set_page_config(page_title="Movimientos Bancarios", page_icon="🏦", layout="wide")
@@ -46,6 +46,10 @@ with col_a:
 ok_p, msg_p = validate_periodo(periodo)
 if not ok_p:
     st.error(f"❌ {msg_p}")
+    st.stop()
+ok_db, msg_db, periodo_db = periodo_to_date_str(periodo)
+if not ok_db or not periodo_db:
+    st.error(f"❌ {msg_db}")
     st.stop()
 
 st.divider()
@@ -84,14 +88,14 @@ with tab_list:
 
     with tab_eg:
         try:
-            egresos = repo_mov.get_by_tipo(condominio_id, periodo, "egreso")
+            egresos = repo_mov.get_by_tipo(condominio_id, periodo_db, "egreso")
         except DatabaseError as e:
             st.error(f"❌ {e}")
             egresos = []
         _render_table(egresos)
     with tab_in:
         try:
-            ingresos = repo_mov.get_by_tipo(condominio_id, periodo, "ingreso")
+            ingresos = repo_mov.get_by_tipo(condominio_id, periodo_db, "ingreso")
         except DatabaseError as e:
             st.error(f"❌ {e}")
             ingresos = []
@@ -127,7 +131,7 @@ with tab_class:
 
     for i, t in enumerate(tipo_tab):
         with t:
-            rows = repo_mov.get_by_tipo(condominio_id, periodo, tipo_sel[i], estado=filtro_estado)
+            rows = repo_mov.get_by_tipo(condominio_id, periodo_db, tipo_sel[i], estado=filtro_estado)
             if not rows:
                 st.info("No hay movimientos.")
                 continue
@@ -206,7 +210,7 @@ with tab_upload:
                 for _, row in df.iterrows():
                     payload = {
                         "condominio_id": condominio_id,
-                        "periodo": periodo,
+                        "periodo": periodo_db,
                         "fecha": pd.to_datetime(row.get("fecha")).date() if row.get("fecha") is not None else None,
                         "descripcion": str(row.get("descripcion") or "").strip() or None,
                         "referencia": str(row.get("referencia") or "").strip() or None,

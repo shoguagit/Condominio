@@ -72,11 +72,34 @@ def validate_form(data: dict, rules: dict) -> list[str]:
 
 
 def validate_periodo(periodo_str: str) -> tuple[bool, str]:
-    """Valida formato MM/YYYY"""
+    """Valida formato de período (MM/YYYY o YYYY-MM-DD)."""
     if not periodo_str:
         return False, "El período es obligatorio"
-    if not re.match(r"^\d{2}/\d{4}$", periodo_str):
-        return False, "Formato debe ser MM/YYYY"
+    s = str(periodo_str).strip()
+    if re.match(r"^\d{2}/\d{4}$", s):
+        mm, yyyy = s.split("/")
+        m = int(mm)
+        if not (1 <= m <= 12):
+            return False, "Mes inválido en el período (use MM/YYYY)"
+        return True, ""
+    if re.match(r"^\d{4}-\d{2}-\d{2}$", s):
+        return True, ""
+    return False, "Formato debe ser MM/YYYY"
+
+
+def periodo_to_date_str(periodo_str: str) -> tuple[bool, str, str | None]:
+    """
+    Convierte MM/YYYY a YYYY-MM-01 para columnas DATE en Supabase.
+    También acepta YYYY-MM-DD y lo devuelve tal cual.
+    """
+    ok, msg = validate_periodo(periodo_str)
+    if not ok:
+        return False, msg, None
+    s = str(periodo_str).strip()
+    if re.match(r"^\d{2}/\d{4}$", s):
+        mm, yyyy = s.split("/")
+        return True, "", f"{yyyy}-{mm}-01"
+    return True, "", s
     return True, ""
 
 

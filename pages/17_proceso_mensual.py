@@ -7,7 +7,7 @@ from repositories.alicuota_repository import AlicuotaRepository
 from repositories.unidad_repository import UnidadRepository
 from utils.auth import check_authentication, require_condominio
 from utils.error_handler import DatabaseError
-from utils.validators import validate_periodo, validate_suma_alicuotas
+from utils.validators import validate_periodo, validate_suma_alicuotas, periodo_to_date_str
 from components.header import render_header
 from components.breadcrumb import render_breadcrumb
 
@@ -40,9 +40,13 @@ ok_p, msg_p = validate_periodo(periodo)
 if not ok_p:
     st.error(f"❌ {msg_p}")
     st.stop()
+ok_db, msg_db, periodo_db = periodo_to_date_str(periodo)
+if not ok_db or not periodo_db:
+    st.error(f"❌ {msg_db}")
+    st.stop()
 
 try:
-    proceso = repo_proc.get_or_create(condominio_id, periodo)
+    proceso = repo_proc.get_or_create(condominio_id, periodo_db)
 except DatabaseError as e:
     st.error(f"❌ {e}")
     st.stop()
@@ -53,7 +57,7 @@ if proceso.get("estado") == "cerrado":
 st.divider()
 
 try:
-    movimientos = repo_mov.get_all(condominio_id, periodo=periodo)
+    movimientos = repo_mov.get_all(condominio_id, periodo=periodo_db)
 except DatabaseError as e:
     st.error(f"❌ {e}")
     movimientos = []
@@ -97,7 +101,7 @@ if st.button("Procesar mes", type="primary", use_container_width=True, disabled=
         # Map alícuota_id -> valor
         ali_val = {a["id"]: float(a.get("total_alicuota") or 0) for a in alicuotas}
 
-        pagos_por_unidad = repo_mov.sum_ingresos_por_unidad(condominio_id, periodo)
+        pagos_por_unidad = repo_mov.sum_ingresos_por_unidad(condominio_id, periodo_db)
 
         for u in unidades:
             alicuota_id = u.get("alicuota_id")
@@ -112,7 +116,7 @@ if st.button("Procesar mes", type="primary", use_container_width=True, disabled=
                     "unidad_id": u.get("id"),
                     "propietario_id": u.get("propietario_id"),
                     "condominio_id": condominio_id,
-                    "periodo": periodo,
+                    "periodo": periodo_db,
                     "alicuota_valor": v,
                     "total_gastos_bs": total_facturable_bs,
                     "cuota_calculada_bs": cuota,
@@ -139,7 +143,7 @@ if st.button("Cerrar mes", use_container_width=True, disabled=(proceso.get("esta
             st.error("❌ Primero debe Procesar el mes antes de cerrarlo.")
             st.stop()
 
-        cuotas = repo_proc.get_cuotas(condominio_id, periodo)
+        cuotas = repo_proc.get_cuotas(condominio_id, periodo_db)
         if not cuotas:
             st.error("❌ No hay cuotas generadas para cerrar este mes.")
             st.stop()
@@ -154,7 +158,7 @@ if st.button("Cerrar mes", use_container_width=True, disabled=(proceso.get("esta
         repo_proc.update(proceso["id"], {"estado": "cerrado"})
 
         # Marcar movimientos del período como procesados
-        repo_mov.mark_periodo_procesado(condominio_id, periodo)
+        repo_mov.mark_periodo_procesado(condominio_id, periodo_db)
 
         st.success("✅ Mes cerrado. Saldos actualizados y movimientos procesados.")
         st.rerun()
@@ -163,7 +167,7 @@ if st.button("Cerrar mes", use_container_width=True, disabled=(proceso.get("esta
 
 st.markdown("### 📄 Cuotas generadas")
 try:
-    cuotas = repo_proc.get_cuotas(condominio_id, periodo)
+    cuotas = repo_proc.get_cuotas(condominio_id, periodo_db)
 except DatabaseError as e:
     st.error(f"❌ {e}")
     cuotas = []

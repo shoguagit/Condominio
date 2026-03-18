@@ -7,7 +7,7 @@ from repositories.unidad_repository import UnidadRepository
 from repositories.propietario_repository import PropietarioRepository
 from utils.auth import check_authentication, require_condominio
 from utils.error_handler import DatabaseError
-from utils.validators import validate_periodo
+from utils.validators import validate_periodo, periodo_to_date_str
 from components.header import render_header
 from components.breadcrumb import render_breadcrumb
 
@@ -34,6 +34,10 @@ periodo = st.text_input("Período (YYYY-MM-01) *", value=str(st.session_state.ge
 ok_p, msg_p = validate_periodo(periodo)
 if not ok_p:
     st.error(f"❌ {msg_p}")
+    st.stop()
+ok_db, msg_db, periodo_db = periodo_to_date_str(periodo)
+if not ok_db or not periodo_db:
+    st.error(f"❌ {msg_db}")
     st.stop()
 
 try:
@@ -64,7 +68,7 @@ tab_resumen, tab_historico, tab_mov = st.tabs(["📌 Resumen del período", "�
 
 with tab_resumen:
     try:
-        cuotas_p = repo_proc.get_cuotas(condominio_id, periodo)
+        cuotas_p = repo_proc.get_cuotas(condominio_id, periodo_db)
     except DatabaseError as e:
         st.error(f"❌ {e}")
         st.stop()
@@ -131,7 +135,7 @@ with tab_historico:
 with tab_mov:
     st.markdown("### 🏦 Movimientos del período")
     try:
-        movs = repo_mov.get_all(condominio_id, periodo=periodo)
+        movs = repo_mov.get_all(condominio_id, periodo=periodo_db)
     except DatabaseError as e:
         st.error(f"❌ {e}")
         st.stop()
