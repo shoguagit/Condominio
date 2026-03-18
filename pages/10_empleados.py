@@ -167,7 +167,7 @@ with col_main:
                 ok_tel, msg_tel = validate_telefono_venezolano(tel_cel)
                 if not ok_tel:
                     st.error(f"❌ {msg_tel}")
-                    return
+                    st.stop()
                 payload = {
                     "condominio_id":    condominio_id,
                     "nombre":           (nombre or "").strip(),
