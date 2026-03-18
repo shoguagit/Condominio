@@ -78,8 +78,13 @@ class UsuarioRepository:
             if not auth_resp.user:
                 raise AuthError("No se pudo crear el usuario en Supabase Auth.")
         except Exception as e:
-            err = str(e) if not isinstance(e, str) else e
+            # Nos protegemos contra cualquier tipo raro de excepción
+            try:
+                err = str(e)
+            except Exception:
+                err = repr(e)
             err_l = err.lower() if isinstance(err, str) else ""
+
             if "service_key" in err_l or "service role" in err_l:
                 raise DatabaseError(
                     "Falta configurar SUPABASE_SERVICE_KEY (service_role) en Secrets/.env "
