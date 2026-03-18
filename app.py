@@ -56,10 +56,7 @@ if not st.session_state.authenticated and os.getenv("CONDOSYS_DEV_AUTOLOGIN") ==
 # LOGIN
 # =============================================================================
 if not st.session_state.authenticated:
-    from components.styles import LOGIN_CSS
-
-    # Ocultar navegación y centrado 100vh sin scroll
-    st.markdown(LOGIN_CSS, unsafe_allow_html=True)
+    # Login centrado sin scroll + un solo card
     st.markdown(
         """
         <style>
@@ -67,176 +64,74 @@ if not st.session_state.authenticated:
         [data-testid="stSidebarNavItems"],
         [data-testid="stSidebar"] { display: none !important; }
         #MainMenu, footer, header { visibility: hidden; }
-        body, .stApp { background-color: #FFFFFF !important; color: #2C3E50 !important;
-                       font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
-        .login-wrapper {
+        .main > div {
+            display: flex;
+            align-items: center;
+            justify-content: center;
             min-height: 100vh;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            background: radial-gradient(circle at top left, #EBF5FB 0, #FFFFFF 52%);
+            padding-top: 0 !important;
         }
-
-        /* Tarjeta corporativa */
-        .login-card {
-            width: 380px;
-            max-width: 94vw;
-            background: #FFFFFF;
-            border-radius: 16px;
-            padding: 28px 32px 22px;
-            border: 1px solid #D5D8DC;
-            border-top: 4px solid #1B4F72;
-            box-shadow: 0 10px 35px rgba(0,0,0,0.10);
+        .block-container {
+            padding-top: 0 !important;
+            padding-bottom: 0 !important;
         }
-
-        /* Cabecera con logo y nombre del sistema */
-        .login-logo {
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            text-align: center;
-            margin-bottom: 20px;
-        }
-        .login-logo-icon {
-            width: 56px;
-            height: 56px;
-            border-radius: 16px;
-            background: linear-gradient(135deg, #1B4F72, #2E86C1);
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            font-size: 30px;
-            color: #FFFFFF;
-            box-shadow: 0 6px 18px rgba(27,79,114,0.45);
-        }
-        .login-logo-title {
-            margin-top: 14px;
-            font-size: 18px;
-            font-weight: 700;
-            letter-spacing: -0.2px;
-            color: #1B4F72;
-        }
-        .login-logo-subtitle {
-            margin-top: 2px;
-            font-size: 12px;
-            color: #717D7E;
-        }
-
-        /* Labels corporativos */
-        label {
-            color: #2C3E50 !important;
-            font-size: 12px !important;
-            font-weight: 600 !important;
-        }
-
-        /* Inputs limpios */
-        [data-baseweb="input"] input {
-            color: #1C2833 !important;
-            background: #FFFFFF !important;
-            font-size: 13px !important;
-        }
-
-        /* Ocultar sugerencias de contraseña del navegador */
-        input[type="password"]::-webkit-credentials-auto-fill-button,
-        input[type="password"]::-webkit-strong-password-auto-fill-button,
-        input[type="password"]::-webkit-contacts-auto-fill-button {
-            display: none !important;
-        }
-
-        /* Botón primario corporativo */
+        /* Ocultar "Press Enter to submit form" */
+        input[aria-label="Contraseña"] + div { display: none !important; }
+        .stTextInput div[data-baseweb="input"]::after { display: none !important; }
+        [data-testid="stForm"] + div small,
+        [data-testid="stForm"] ~ div [data-testid="stCaptionContainer"] { display: none !important; }
+        /* Botón primario login */
         div[data-testid="stForm"] button[kind="primaryFormSubmit"] {
             background: #1B4F72 !important;
             color: #FFFFFF !important;
             border: none !important;
-            border-radius: 999px !important;
-            font-weight: 700 !important;
-            font-size: 14px !important;
-            padding: 10px 14px !important;
-            box-shadow: 0 4px 12px rgba(27,79,114,0.45);
-            transition: background 0.15s ease-out, transform 0.08s ease-out,
-                        box-shadow 0.15s ease-out !important;
-        }
-        div[data-testid="stForm"] button[kind="primaryFormSubmit"]:hover {
-            background: #154360 !important;
-            transform: translateY(-1px);
-            box-shadow: 0 6px 16px rgba(27,79,114,0.55);
-        }
-        div[data-testid="stForm"] button[kind="primaryFormSubmit"]:active {
-            transform: translateY(0);
-            box-shadow: 0 3px 8px rgba(27,79,114,0.40);
-        }
-
-        /* Texto de versión */
-        .login-footer {
-            text-align: center;
-            color: #B3B6B7;
-            font-size: 10px;
-            margin-top: 14px;
+            border-radius: 8px !important;
+            font-weight: 600 !important;
         }
         </style>
         """,
         unsafe_allow_html=True,
     )
 
-    # JS: forzar autocomplete=off en el campo de contraseña
+    # Un solo card: cabecera + formulario dentro
     st.markdown(
         """
-        <script>
-        (function() {
-            function disableAutofill() {
-                document.querySelectorAll('input[type="password"]').forEach(function(el) {
-                    el.setAttribute('autocomplete', 'new-password');
-                    el.setAttribute('data-lpignore', 'true');
-                });
-            }
-            if (document.readyState === 'complete') { disableAutofill(); }
-            else { window.addEventListener('load', disableAutofill); }
-            setTimeout(disableAutofill, 800);
-        })();
-        </script>
+        <div style="
+            background: white;
+            border-radius: 16px;
+            padding: 40px;
+            box-shadow: 0 4px 24px rgba(0,0,0,0.10);
+            max-width: 420px;
+            margin: auto;
+            text-align: center;
+        ">
+            <div style="font-size:56px; margin-bottom:8px;">🏢</div>
+            <h2 style="color:#1B4F72; margin:0 0 4px 0;">
+                Sistema de Condominio</h2>
+            <p style="color:#6B7280; margin:0 0 28px 0; font-size:14px;">
+                Acceso seguro para administradores y juntas</p>
+        </div>
         """,
         unsafe_allow_html=True,
     )
 
-    # Wrapper para centrar la tarjeta sobre fondo blanco corporativo
-    st.markdown('<div class="login-wrapper">', unsafe_allow_html=True)
-
-    _, col, _ = st.columns([1, 1.2, 1])
-    with col:
-        # Cabecera con "logo" del sistema
-        st.markdown(
-            """
-            <div class="login-card">
-                <div class="login-logo">
-                    <div class="login-logo-icon">🏢</div>
-                    <div class="login-logo-title">Sistema de Condominio</div>
-                    <div class="login-logo-subtitle">Acceso seguro para administradores y juntas</div>
-                </div>
-            """,
-            unsafe_allow_html=True,
+    with st.form("login_form", clear_on_submit=False):
+        email    = st.text_input("Correo electrónico", placeholder="usuario@email.com")
+        password = st.text_input(
+            "Contraseña",
+            type="password",
+            placeholder="••••••••",
+            key="login_password",
+            autocomplete="new-password",
+        )
+        st.markdown("<div style='height:4px'></div>", unsafe_allow_html=True)
+        submitted = st.form_submit_button(
+            "Ingresar →",
+            use_container_width=True,
+            type="primary",
         )
 
-        with st.form("login_form", clear_on_submit=False):
-            email    = st.text_input("Correo electrónico", placeholder="usuario@email.com")
-            password = st.text_input(
-                "Contraseña",
-                type="password",
-                placeholder="••••••••",
-                help=None,
-                autocomplete="new-password",
-            )
-            st.markdown("<div style='height:4px'></div>", unsafe_allow_html=True)
-            submitted = st.form_submit_button(
-                "Ingresar →",
-                use_container_width=True,
-                type="primary",
-            )
-
-        # Cerrar tarjeta y wrapper
-        st.markdown("</div>", unsafe_allow_html=True)
-        st.markdown("</div>", unsafe_allow_html=True)
-
-        if submitted:
+    if submitted:
             if not email or not password:
                 st.error("Ingrese correo y contraseña.")
             else:
@@ -276,10 +171,11 @@ if not st.session_state.authenticated:
                             # Operador/consulta: un solo condominio asignado, entrar directo
                             st.session_state.pending_admin_condominio_selection = False
                             from utils.bcv_rate import fetch_bcv_rate
+                            from utils.formatters import format_mes_proceso
                             bcv_rate, bcv_source = fetch_bcv_rate()
                             st.session_state.condominio_id     = u.get("condominio_id")
                             st.session_state.condominio_nombre = condo.get("nombre", "—")
-                            st.session_state.mes_proceso       = condo.get("mes_proceso")
+                            st.session_state.mes_proceso       = format_mes_proceso(condo.get("mes_proceso")) or ""
                             st.session_state.tasa_cambio       = bcv_rate or float(condo.get("tasa_cambio") or 0)
                             st.session_state.tasa_fuente       = bcv_source
 
@@ -287,11 +183,10 @@ if not st.session_state.authenticated:
                     except Exception:
                         st.error("Credenciales incorrectas o usuario inactivo.")
 
-        st.markdown(
-            "<p class='login-footer'>v1.0 · Sistema de Gestión de Condominios</p>",
-            unsafe_allow_html=True,
-        )
-
+    st.markdown(
+        "<p style='text-align:center;color:#9CA3AF;font-size:10px;margin-top:12px;'>v1.0 · Sistema de Gestión de Condominios</p>",
+        unsafe_allow_html=True,
+    )
     st.stop()
 
 
@@ -302,16 +197,35 @@ from components.header import render_header
 from utils.formatters import format_mes_proceso
 from utils.auth import apply_condominio_to_session
 
-# render_header() inyecta TODO el CSS global (sidebar.py GLOBAL_CSS) + sidebar + barra corporativa
-render_header()
-
-# ── Admin: selección de condominio tras login (solo si aún no eligió) ─────────
+# ── Admin: selección de condominio tras login (sin header, pantalla limpia) ───
 if st.session_state.get("pending_admin_condominio_selection"):
+    st.markdown(
+        """
+        <style>
+        [data-testid="stSidebar"] { display: none !important; }
+        .main > div { padding-top: 2rem !important; }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+    st.markdown(
+        """
+        <div style="text-align:center; padding:60px 20px;">
+            <div style="font-size:48px;">🏢</div>
+            <h2 style="color:#1B4F72;">Seleccione un Condominio</h2>
+            <p style="color:#6B7280;">
+                Elija el condominio con el que desea trabajar</p>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
     from config.supabase_client import get_supabase_client
     from repositories.condominio_repository import CondominioRepository
-    condominios = CondominioRepository(get_supabase_client()).get_all(solo_activos=False)
+    repo = CondominioRepository(get_supabase_client())
+    condominios = repo.get_all(solo_activos=True)
+    condominios = sorted(condominios, key=lambda c: (c.get("nombre") or "").lower())
     if not condominios:
-        st.warning("No hay condominios registrados. Cree uno en el módulo Condominios.")
+        st.warning("No hay condominios activos registrados. Cree uno en el módulo Condominios.")
         st.page_link("pages/01_condominios.py", label="Ir a Condominios")
         st.stop()
     options = [c.get("nombre") or f"Condominio #{c.get('id')}" for c in condominios]
@@ -323,11 +237,13 @@ if st.session_state.get("pending_admin_condominio_selection"):
     )
     if st.button("Entrar al dashboard", type="primary", key="admin_condominio_entrar"):
         idx = options.index(sel)
-        cid = condominios[idx]["id"]
-        apply_condominio_to_session(cid)
+        apply_condominio_to_session(condominios[idx]["id"])
         st.session_state.pending_admin_condominio_selection = False
         st.rerun()
     st.stop()
+
+# render_header() solo cuando ya hay condominio seleccionado
+render_header()
 
 # ── KPI strip (condominio, mes, tasa, rol, correo) ─────────────────────────────
 mes_str     = format_mes_proceso(st.session_state.mes_proceso) or "—"

@@ -316,6 +316,20 @@ button[data-testid="baseButton-primary"] {
     background-color: #1B4F72 !important;
 }
 
+/* Botón + Nuevo en record_table: forzar blanco sobre azul */
+.record-table-bar-nuevo .stButton > button,
+.record-table-bar-nuevo div[data-testid="stButton"] > button {
+    background: #1B4F72 !important;
+    color: #FFFFFF !important;
+    border: none !important;
+    font-weight: 600 !important;
+}
+.record-table-bar-nuevo .stButton > button:hover,
+.record-table-bar-nuevo div[data-testid="stButton"] > button:hover {
+    background: #154360 !important;
+    color: #FFFFFF !important;
+}
+
 /* ── FORMULARIOS: secciones con subtítulo (Fase 2) ─────────────────────────── */
 .form-section-hdr {
     font-size: 11px;

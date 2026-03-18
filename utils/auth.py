@@ -62,7 +62,8 @@ def check_authentication() -> None:
                     else:
                         st.session_state.condominio_id = u.get("condominio_id") if isinstance(u, dict) else None
                         st.session_state.condominio_nombre = condo.get("nombre", "—")
-                        st.session_state.mes_proceso = condo.get("mes_proceso")
+                        from utils.formatters import format_mes_proceso
+                        st.session_state.mes_proceso = format_mes_proceso(condo.get("mes_proceso")) or ""
                         st.session_state.tasa_cambio = bcv_rate or float(condo.get("tasa_cambio") or 0)
                         st.session_state.tasa_fuente = bcv_source
 
@@ -151,8 +152,10 @@ def apply_condominio_to_session(condominio_id: int) -> None:
     """
     Carga el condominio elegido en session_state (nombre, mes_proceso, tasa, etc.).
     Usado tras selección de condominio por admin (login o Cambiar).
+    mes_proceso se guarda en formato MM/YYYY para pantalla.
     """
     from repositories.condominio_repository import CondominioRepository
+    from utils.formatters import format_mes_proceso
     repo = CondominioRepository(get_supabase_client())
     condo = repo.get_by_id(condominio_id)
     if not condo:
@@ -162,7 +165,7 @@ def apply_condominio_to_session(condominio_id: int) -> None:
     st.session_state.condominio_nombre = condo.get("nombre", "—")
     st.session_state.condominio_pais = pais.get("nombre")
     st.session_state.condominio_moneda = pais.get("simbolo_moneda") or "Bs."
-    st.session_state.mes_proceso = condo.get("mes_proceso")
+    st.session_state.mes_proceso = format_mes_proceso(condo.get("mes_proceso")) or ""
     try:
         from utils.bcv_rate import fetch_bcv_rate
         bcv_rate, bcv_source = fetch_bcv_rate()
