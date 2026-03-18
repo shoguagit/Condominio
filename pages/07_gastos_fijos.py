@@ -64,11 +64,11 @@ with col_help:
         tips=[
             "Asigne una alícuota para distribuir el gasto entre unidades.",
             "El monto es en la moneda principal del condominio.",
-            "Desactive gastos temporales en lugar de eliminarlos.",
+            "Registre el tipo de gasto para facilitar el resumen mensual.",
         ],
     )
     if records:
-        total = sum(float(r.get("monto") or 0) for r in records if r.get("activo"))
+        total = sum(float(r.get("monto") or 0) for r in records)
         st.markdown(
             f"<div style='background:#EBF5FB;border-radius:8px;padding:10px 12px;"
             f"font-size:12px;color:#2C3E50;margin-top:8px;'>"
@@ -95,9 +95,9 @@ with col_main:
         columns_config={
             "id":          {"label": "Id",                  "width": 55},
             "descripcion": {"label": "Descripción",         "width": 260},
+            "tipo_gasto":  {"label": "Tipo gasto",         "width": 170},
             "monto":       {"label": "Monto",               "width": 110, "format": "currency"},
             "_alicuota":   {"label": "Alícuota / Cond.",    "width": 180},
-            "activo":      {"label": "Activo",              "width": 65,  "format": "boolean"},
         },
         search_field="descripcion",
         key="gastos_fijos",
@@ -130,10 +130,15 @@ with col_main:
             col1, col2 = st.columns(2)
             with col1:
                 descripcion = st.text_input("Descripción *", value=cr.get("descripcion", ""), max_chars=200)
-                activo      = st.checkbox("Activo", value=cr.get("activo", True))
+                tipo_gasto_opts = ["Nómina", "Servicio recurrente", "Contrato"]
+                tipo_gasto = st.selectbox(
+                    "Tipo de gasto *",
+                    options=tipo_gasto_opts,
+                    index=tipo_gasto_opts.index(cr.get("tipo_gasto") or "Nómina") if cr.get("tipo_gasto") in tipo_gasto_opts else 0,
+                )
             with col2:
                 monto   = st.number_input(
-                    "Monto *",
+                    "Monto",
                     value=float(cr.get("monto") or 0),
                     min_value=0.0, step=0.01, format="%.2f",
                 )
@@ -168,8 +173,8 @@ with col_main:
                     "condominio_id": condominio_id,
                     "descripcion":   (descripcion or "").strip(),
                     "monto":         monto,
+                    "tipo_gasto":    tipo_gasto,
                     "alicuota_id":   alicuota_id,
-                    "activo":        activo,
                 }
                 try:
                     if is_edit and current_rec:

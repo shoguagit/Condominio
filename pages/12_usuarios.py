@@ -168,10 +168,9 @@ with col_main:
             with col2:
                 rol = st.selectbox(
                     "Rol *",
-                    options=["admin", "operador", "consulta"],
+                    options=["admin", "operador"],
                     format_func=lambda r: {"admin": "Administrador",
-                                           "operador": "Operador",
-                                           "consulta": "Solo Consulta"}[r],
+                                           "operador": "Operador"}[r],
                 )
                 st.markdown(
                     """
@@ -179,8 +178,7 @@ with col_main:
                                 font-size:12px; color:#2C3E50; margin-top:4px;'>
                         <b>Permisos por rol:</b><br>
                         Administrador — acceso total<br>
-                        Operador — carga y edición<br>
-                        Solo Consulta — solo lectura
+                        Operador — carga y edición
                     </div>
                     """,
                     unsafe_allow_html=True,
@@ -269,9 +267,11 @@ with col_main:
             except ValueError:
                 condo_default = 0
 
-            ROLES = ["admin", "operador", "consulta"]
-            rol_default = ROLES.index(current_rec.get("rol", "consulta")) \
-                if current_rec.get("rol") in ROLES else 2
+            ROLES = ["admin", "operador"]
+            rol_actual = current_rec.get("rol", "operador")
+            if rol_actual == "consulta":
+                rol_actual = "operador"
+            rol_default = ROLES.index(rol_actual) if rol_actual in ROLES else 1
 
             with st.form("form_user_edit"):
                 st.markdown(
@@ -301,8 +301,7 @@ with col_main:
                         options=ROLES,
                         index=rol_default,
                         format_func=lambda r: {"admin": "Administrador",
-                                               "operador": "Operador",
-                                               "consulta": "Solo Consulta"}[r],
+                                               "operador": "Operador"}[r],
                     )
                     activo = st.checkbox("Activo", value=current_rec.get("activo", True))
                     st.markdown(

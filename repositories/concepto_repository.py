@@ -1,6 +1,6 @@
 from supabase import Client
 
-from utils.error_handler import safe_db_operation
+from utils.error_handler import safe_db_operation, DatabaseError
 
 
 class ConceptoRepository:
@@ -32,10 +32,17 @@ class ConceptoRepository:
 
     @safe_db_operation("concepto.create")
     def create(self, data: dict) -> dict:
+        tipo = (data.get("tipo") or "").strip()
+        if tipo not in {"gasto", "ajuste"}:
+            raise DatabaseError("Tipo de concepto inválido. Use 'Gasto' o 'Ajuste'.")
         return self.client.table(self.table).insert(data).execute().data[0]
 
     @safe_db_operation("concepto.update")
     def update(self, concepto_id: int, data: dict) -> dict:
+        if "tipo" in data:
+            tipo = (data.get("tipo") or "").strip()
+            if tipo not in {"gasto", "ajuste"}:
+                raise DatabaseError("Tipo de concepto inválido. Use 'Gasto' o 'Ajuste'.")
         return (
             self.client.table(self.table)
             .update(data).eq("id", concepto_id).execute()
@@ -45,3 +52,31 @@ class ConceptoRepository:
     def delete(self, concepto_id: int) -> bool:
         self.client.table(self.table).delete().eq("id", concepto_id).execute()
         return True
+
+    def can_delete(self, id: int, condominio_id: int) -> bool:
+        """
+        No se permite eliminar si el concepto ya fue usado en movimientos
+        del condominio en el período activo (condominios.mes_proceso).
+        """
+        condo = (
+            self.client.table("condominios")
+            .select("mes_proceso")
+            .eq("id", condominio_id)
+            .single()
+            .execute()
+        ).data or {}
+
+        periodo_activo = condo.get("mes_proceso")
+        if not periodo_activo:
+            # Si no hay mes_proceso configurado, permitir borrar (no hay "período activo" definido)
+            return True
+
+        result = (
+            self.client.table("movimientos")
+            .select("id")
+            .eq("condominio_id", condominio_id)
+            .eq("periodo", periodo_activo)
+            .eq("concepto_id", id)
+            .execute()
+        )
+        return len(result.data or []) == 0

@@ -3,6 +3,7 @@ import streamlit as st
 from config.supabase_client import get_supabase_client
 from repositories.unidad_repository import UnidadRepository
 from repositories.propietario_repository import PropietarioRepository
+from repositories.alicuota_repository import AlicuotaRepository
 from components.header import render_header
 from components.breadcrumb import render_breadcrumb
 from components.crud_toolbar import init_toolbar_state, get_current_index, set_current_index
@@ -28,9 +29,9 @@ if st.session_state.get("_last_condominio_id") != condominio_id:
 @st.cache_resource
 def get_repos():
     client = get_supabase_client()
-    return UnidadRepository(client), PropietarioRepository(client)
+    return UnidadRepository(client), PropietarioRepository(client), AlicuotaRepository(client)
 
-repo_unidad, repo_prop = get_repos()
+repo_unidad, repo_prop, repo_ali = get_repos()
 
 for k, v in {"uni_modo": None, "uni_records": None}.items():
     if k not in st.session_state:
@@ -41,6 +42,10 @@ init_toolbar_state("unidades")
 @st.cache_data(ttl=120)
 def load_propietarios_activos(cid: int):
     return repo_prop.get_all(cid, solo_activos=True)
+
+@st.cache_data(ttl=120)
+def load_alicuotas_activos(cid: int):
+    return repo_ali.get_all(cid, solo_activos=True)
 
 def load_unidades():
     return repo_unidad.get_all(condominio_id)
@@ -72,6 +77,7 @@ if st.session_state.uni_records is None:
 
 records     = st.session_state.uni_records
 propietarios = load_propietarios_activos(condominio_id)
+alicuotas    = load_alicuotas_activos(condominio_id)
 
 with col_help:
     render_help_panel(
@@ -154,6 +160,15 @@ with col_main:
         tipo_cond_default = TIPOS_CONDOMINO.index(cr["tipo_condomino"]) \
             if cr.get("tipo_condomino") in TIPOS_CONDOMINO else 0
 
+        # Alícuota por defecto
+        ali_nombres = [a["descripcion"] for a in alicuotas] if alicuotas else []
+        ali_ids     = [a["id"] for a in alicuotas] if alicuotas else []
+        def_ali_id  = cr.get("alicuota_id")
+        try:
+            ali_default = ali_ids.index(def_ali_id) if def_ali_id in ali_ids else 0
+        except (ValueError, TypeError):
+            ali_default = 0
+
         with st.form("form_unidad"):
             st.markdown(
                 '<p class="form-section-hdr">Identificación</p>',
@@ -165,6 +180,12 @@ with col_main:
                     "Tipo de propiedad *",
                     options=TIPOS_PROPIEDAD,
                     index=tipo_prop_default,
+                )
+                codigo = st.text_input(
+                    "Código *",
+                    value=cr.get("codigo", ""),
+                    placeholder="Ej: A01, B02",
+                    max_chars=10,
                 )
                 numero = st.text_input(
                     "Número de unidad *",
@@ -185,6 +206,17 @@ with col_main:
                     '<p class="form-section-hdr">Propietario y cuota</p>',
                     unsafe_allow_html=True,
                 )
+                if not alicuotas:
+                    st.warning("⚠️ No hay alícuotas registradas. Registre alícuotas primero.")
+                    alicuota_id = None
+                else:
+                    ali_sel = st.selectbox(
+                        "Alícuota *",
+                        options=ali_nombres,
+                        index=ali_default,
+                    )
+                    alicuota_id = ali_ids[ali_nombres.index(ali_sel)]
+
                 if not propietarios:
                     st.warning("⚠️ No hay propietarios registrados. Registre uno primero.")
                     propietario_id = None
@@ -223,8 +255,10 @@ with col_main:
 
         if guardar:
             errors = validate_form(
-                {"numero": numero, "propietario_id": propietario_id},
+                {"codigo": codigo, "alicuota_id": alicuota_id, "numero": numero, "propietario_id": propietario_id},
                 {
+                    "codigo":          {"required": True, "max_length": 10},
+                    "alicuota_id":     {"required": True},
                     "numero":         {"required": True, "max_length": 20},
                     "propietario_id": {"required": True},
                 },
@@ -235,12 +269,15 @@ with col_main:
             else:
                 payload = {
                     "condominio_id":  condominio_id,
+                    "codigo":         (codigo or "").strip(),
+                    "alicuota_id":    alicuota_id,
                     "propietario_id": propietario_id,
                     "tipo_propiedad": tipo_propiedad,
                     "numero":         (numero or "").strip(),
                     "piso":           (piso or "").strip() or None,
                     "tipo_condomino": tipo_condomino,
                     "cuota_fija":     cuota_fija,
+                    "saldo":          float(cr.get("saldo") or 0),
                     "activo":         activo,
                 }
                 try:

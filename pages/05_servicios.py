@@ -52,10 +52,10 @@ with col_help:
         descripcion_larga=(
             "Registre los servicios que el condominio ofrece a los condóminos, "
             "como alquiler de parrillera, salón de fiestas, cancha deportiva, etc. "
-            "El precio unitario se usa al facturar el servicio."
+            "Los cobros del servicio son variables (no se maneja un precio unitario fijo)."
         ),
         tips=[
-            "El precio unitario puede ser por hora, día o evento.",
+            "El monto del servicio se registra al momento del movimiento.",
             "Desactive servicios que no estén disponibles temporalmente.",
         ],
     )
@@ -74,7 +74,6 @@ with col_main:
         columns_config={
             "id":               {"label": "Id",             "width": 55},
             "nombre":           {"label": "Servicio",       "width": 280},
-            "precio_unitario":  {"label": "Precio Unitario","width": 130, "format": "currency"},
             "activo":           {"label": "Activo",         "width": 65,  "format": "boolean"},
         },
         search_field="nombre",
@@ -102,11 +101,7 @@ with col_main:
                 nombre = st.text_input("Nombre del servicio *", value=cr.get("nombre", ""), max_chars=150)
                 activo = st.checkbox("Activo", value=cr.get("activo", True))
             with col2:
-                precio = st.number_input(
-                    "Precio unitario *",
-                    value=float(cr.get("precio_unitario") or 0),
-                    min_value=0.0, step=0.01, format="%.2f",
-                )
+                st.caption("El servicio no tiene precio fijo.")
 
             col_s, col_c = st.columns(2)
             with col_s:
@@ -125,7 +120,7 @@ with col_main:
                     st.error(f"❌ {e}")
             else:
                 payload = {"condominio_id": condominio_id, "nombre": (nombre or "").strip(),
-                           "precio_unitario": precio, "activo": activo}
+                           "activo": activo}
                 try:
                     if is_edit and current_rec:
                         repo.update(current_rec["id"], payload)

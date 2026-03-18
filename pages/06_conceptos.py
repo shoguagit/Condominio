@@ -39,7 +39,7 @@ if st.session_state.conc_records is None:
 
 records = st.session_state.conc_records
 
-TIPOS = {"gasto": "💸 Gasto", "ingreso": "💵 Ingreso"}
+TIPOS = {"gasto": "💸 Gasto", "ajuste": "🛠️ Ajuste"}
 
 st.markdown("## 📋 Conceptos")
 
@@ -49,26 +49,25 @@ with col_help:
     render_help_panel(
         icono="📋",
         titulo="Conceptos",
-        descripcion_corta="Conceptos de gasto e ingreso del condominio.",
+        descripcion_corta="Conceptos de gasto y ajustes del condominio.",
         descripcion_larga=(
             "Los conceptos clasifican los movimientos financieros del condominio. "
             "Ejemplos de gastos: 'Gastos Generales', 'Mantenimiento Ascensor'. "
-            "Ejemplos de ingresos: 'Cuotas de Condominio', 'Alquiler Áreas Comunes'."
+            "Ejemplos de ajustes: 'Corrección de saldo', 'Ajuste por diferencia'."
         ),
         tips=[
             "Tipo 'Gasto': para egresos del condominio.",
-            "Tipo 'Ingreso': para cobros a condóminos.",
+            "Tipo 'Ajuste': para registrar correcciones o reclasificaciones.",
             "Se usan al registrar movimientos del mes.",
         ],
     )
     if records:
         gastos   = sum(1 for r in records if r.get("tipo") == "gasto"   and r.get("activo"))
-        ingresos = sum(1 for r in records if r.get("tipo") == "ingreso" and r.get("activo"))
         st.markdown(
             f"<div style='background:#EBF5FB;border-radius:8px;padding:10px 12px;"
             f"font-size:12px;color:#2C3E50;margin-top:8px;'>"
             f"💸 Gastos activos: <b>{gastos}</b><br>"
-            f"💵 Ingresos activos: <b>{ingresos}</b></div>",
+            f"🛠️ Ajustes activos: <b>{sum(1 for r in records if r.get(\"tipo\") == \"ajuste\" and r.get(\"activo\"))}</b></div>",
             unsafe_allow_html=True,
         )
 
@@ -83,14 +82,14 @@ with col_main:
             on_eliminar = lambda: st.session_state.update({"conc_modo": "eliminar"}),
         )
     with col_filtro:
-        filtro_tipo = st.selectbox("Filtrar por tipo:", ["Todos", "Gasto", "Ingreso"],
+        filtro_tipo = st.selectbox("Filtrar por tipo:", ["Todos", "Gasto", "Ajuste"],
                                    key="conc_filtro", label_visibility="collapsed")
 
     filtered = records
     if filtro_tipo == "Gasto":
         filtered = [r for r in records if r.get("tipo") == "gasto"]
-    elif filtro_tipo == "Ingreso":
-        filtered = [r for r in records if r.get("tipo") == "ingreso"]
+    elif filtro_tipo == "Ajuste":
+        filtered = [r for r in records if r.get("tipo") == "ajuste"]
 
     for r in filtered:
         r["_tipo_label"] = TIPOS.get(r.get("tipo", ""), r.get("tipo", ""))
@@ -122,7 +121,7 @@ with col_main:
         st.markdown("<hr style='margin:4px 0 12px 0;'>", unsafe_allow_html=True)
         cr = current_rec if is_edit and current_rec else {}
 
-        TIPOS_OPT = ["gasto", "ingreso"]
+        TIPOS_OPT = ["gasto", "ajuste"]
         tipo_default = TIPOS_OPT.index(cr["tipo"]) if cr.get("tipo") in TIPOS_OPT else 0
 
         with st.form("form_concepto"):
@@ -179,6 +178,10 @@ with col_main:
             with col_y:
                 if st.button("✅ Sí, eliminar", type="primary", use_container_width=True, key="conc_del_y"):
                     try:
+                        can_del = repo.can_delete(current_rec["id"], condominio_id)
+                        if not can_del:
+                            st.error("No se puede eliminar un concepto si ya fue usado en movimientos del período activo.")
+                            return
                         repo.delete(current_rec["id"])
                         st.success("✅ Concepto eliminado.")
                         st.session_state.conc_modo    = None

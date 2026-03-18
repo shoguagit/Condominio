@@ -46,6 +46,6 @@ class GastoFijoRepository:
 
     @safe_db_operation("gasto_fijo.total_por_condominio")
     def total_mensual(self, condominio_id: int) -> float:
-        """Suma de todos los gastos fijos activos del condominio."""
-        records = self.get_all(condominio_id, solo_activos=True)
+        """Suma de todos los gastos fijos del condominio."""
+        records = self.get_all(condominio_id, solo_activos=False)
         return sum(float(r.get("monto") or 0) for r in records)

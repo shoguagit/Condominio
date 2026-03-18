@@ -533,7 +533,6 @@ def run():
             edit_label="Descripción", edit_value="Alícuota E2E (editada)",
         )
         for nav_key, name in [
-            ("fondos", "Fondos"),
             ("servicios", "Servicios"),
             ("conceptos", "Conceptos"),
             ("gastos_fijos", "Gastos Fijos"),

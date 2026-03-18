@@ -1,6 +1,6 @@
 from supabase import Client
 
-from utils.error_handler import safe_db_operation
+from utils.error_handler import safe_db_operation, DatabaseError
 
 
 class UnidadRepository:
@@ -44,11 +44,33 @@ class UnidadRepository:
 
     @safe_db_operation("unidad.create")
     def create(self, data: dict) -> dict:
+        codigo = (data.get("codigo") or "").strip()
+        alicuota_id = data.get("alicuota_id")
+        propietario_id = data.get("propietario_id")
+        if not codigo:
+            raise DatabaseError("El código de la unidad es obligatorio.")
+        if not alicuota_id:
+            raise DatabaseError("La alícuota es obligatoria.")
+        if not propietario_id:
+            raise DatabaseError("El propietario es obligatorio.")
+        if data.get("saldo") is None:
+            data["saldo"] = 0.00
         response = self.client.table(self.table).insert(data).execute()
         return response.data[0]
 
     @safe_db_operation("unidad.update")
     def update(self, unidad_id: int, data: dict) -> dict:
+        codigo = (data.get("codigo") or "").strip()
+        alicuota_id = data.get("alicuota_id")
+        propietario_id = data.get("propietario_id")
+        if not codigo:
+            raise DatabaseError("El código de la unidad es obligatorio.")
+        if not alicuota_id:
+            raise DatabaseError("La alícuota es obligatoria.")
+        if not propietario_id:
+            raise DatabaseError("El propietario es obligatorio.")
+        if data.get("saldo") is None:
+            data["saldo"] = 0.00
         response = (
             self.client.table(self.table)
             .update(data)

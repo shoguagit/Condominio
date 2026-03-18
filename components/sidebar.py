@@ -428,17 +428,17 @@ def render_sidebar() -> None:
 
     condominio = st.session_state.get("condominio_nombre", "—")
     email      = st.session_state.get("user_email", "—")
-    rol        = st.session_state.get("user_role", "consulta")
+    rol        = st.session_state.get("user_role", "operador")
+    if rol == "consulta":
+        rol = "operador"
 
     rol_bg = {
         "admin":    "#28B463",
         "operador": "#2471A3",
-        "consulta": "#717D7E",
     }.get(rol, "#717D7E")
     rol_label = {
         "admin":    "Administrador",
         "operador": "Operador",
-        "consulta": "Consulta",
     }.get(rol, rol)
 
     def _group(title: str) -> None:
@@ -490,12 +490,14 @@ def render_sidebar() -> None:
         # ── Configuración financiera ───────────────────────────────────────────
         _group("Configuración Financiera")
         st.page_link("pages/03_alicuotas.py",         label="📊  Alícuotas")
-        st.page_link("pages/04_fondos.py",            label="💰  Fondos")
         st.page_link("pages/07_gastos_fijos.py",      label="📌  Gastos Fijos")
         st.page_link("pages/06_conceptos.py",         label="📋  Conceptos")
         st.page_link("pages/05_servicios.py",         label="🔧  Servicios")
         st.page_link("pages/08_conceptos_consumo.py", label="⚡  Consumo")
         st.page_link("pages/09_cuentas_bancos.py",    label="🏦  Cuentas / Bancos")
+        st.page_link("pages/16_movimientos.py",      label="🏦  Movimientos Bancarios")
+        st.page_link("pages/17_proceso_mensual.py",  label="🗓️  Proceso Mensual")
+        st.page_link("pages/18_estado_cuenta.py",    label="🧾  Estado de Cuenta")
 
         # ── Proveedores ────────────────────────────────────────────────────────
         _group("Proveedores")

@@ -133,8 +133,11 @@ def require_condominio() -> str:
 
 def check_permission(required_role: str) -> None:
     """Verifica que el usuario tenga el rol mínimo requerido."""
-    role_hierarchy = {"admin": 3, "operador": 2, "consulta": 1}
-    user_role = st.session_state.get("user_role", "consulta")
+    role_hierarchy = {"admin": 2, "operador": 1}
+    user_role = st.session_state.get("user_role", "operador")
+    # Compatibilidad: si existen usuarios antiguos con rol 'consulta', tratarlos como 'operador'
+    if user_role == "consulta":
+        user_role = "operador"
 
     if role_hierarchy.get(user_role, 0) < role_hierarchy.get(required_role, 99):
         st.error("❌ No tiene permisos para realizar esta acción.")

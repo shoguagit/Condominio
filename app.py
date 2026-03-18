@@ -326,7 +326,6 @@ MODULES = {
     ],
     "💰  Configuración Financiera": [
         ("c-fin",    "📊", "Alícuotas",     "% de participación",        "pages/03_alicuotas.py"),
-        ("c-fin",    "💰", "Fondos",        "Fondos de reserva",         "pages/04_fondos.py"),
         ("c-fin",    "📌", "Gastos Fijos",  "Egresos recurrentes",       "pages/07_gastos_fijos.py"),
         ("c-fin",    "📋", "Conceptos",     "Ítems ingreso/egreso",      "pages/06_conceptos.py"),
         ("c-fin",    "🔧", "Servicios",     "Servicios del condominio",  "pages/05_servicios.py"),

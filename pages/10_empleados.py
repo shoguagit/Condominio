@@ -10,7 +10,7 @@ from components.record_table import render_record_table
 from components.detail_panel import check_close_detail, render_detail_panel
 from utils.auth import check_authentication, require_condominio
 from utils.error_handler import DatabaseError
-from utils.validators import validate_form
+from utils.validators import validate_form, validate_telefono_venezolano
 
 st.set_page_config(page_title="Empleados", page_icon="👷", layout="wide")
 check_authentication()
@@ -32,6 +32,8 @@ for k, v in {"emp_modo": None, "emp_records": None}.items():
         st.session_state[k] = v
 
 init_toolbar_state("empleados")
+
+AREA_OPTS = ["Administración", "Mantenimiento", "Seguridad", "Limpieza", "Otro"]
 
 def load_empleados():
     with st.spinner("Cargando empleados..."):
@@ -121,6 +123,11 @@ with col_main:
             with col1:
                 nombre    = st.text_input("Nombre completo *",  value=cr.get("nombre", ""),   max_chars=200)
                 cargo     = st.text_input("Cargo *",            value=cr.get("cargo", ""),    max_chars=100)
+                area      = st.selectbox(
+                    "Área *",
+                    options=AREA_OPTS,
+                    index=AREA_OPTS.index(cr["area"]) if cr.get("area") in AREA_OPTS else 0,
+                )
                 direccion = st.text_area("Dirección",           value=cr.get("direccion", ""), height=80)
             with col2:
                 st.markdown(
@@ -131,7 +138,7 @@ with col_main:
                 tel_cel   = st.text_input("Teléfono celular",   value=cr.get("telefono_celular", ""),  max_chars=20)
                 correo    = st.text_input("Correo electrónico", value=cr.get("correo", ""),            max_chars=100)
                 notas     = st.text_area("Notas",               value=cr.get("notas", ""),             height=60)
-                activo    = st.checkbox("Activo",               value=cr.get("activo", True))
+                activo    = st.checkbox("Activo",               value=cr.get("activo", False))
 
             col_s, col_c = st.columns(2)
             with col_s:
@@ -145,10 +152,11 @@ with col_main:
 
         if guardar:
             errors = validate_form(
-                {"nombre": nombre, "cargo": cargo, "correo": correo},
+                {"nombre": nombre, "cargo": cargo, "area": area, "correo": correo},
                 {
                     "nombre": {"required": True, "max_length": 200},
                     "cargo":  {"required": True, "max_length": 100},
+                    "area":   {"required": True},
                     "correo": {"required": False, "type": "email"},
                 },
             )
@@ -156,10 +164,15 @@ with col_main:
                 for e in errors:
                     st.error(f"❌ {e}")
             else:
+                ok_tel, msg_tel = validate_telefono_venezolano(tel_cel)
+                if not ok_tel:
+                    st.error(f"❌ {msg_tel}")
+                    return
                 payload = {
                     "condominio_id":    condominio_id,
                     "nombre":           (nombre or "").strip(),
                     "cargo":            (cargo or "").strip(),
+                    "area":             (area or "").strip(),
                     "direccion":        (direccion or "").strip() or None,
                     "telefono_fijo":    (tel_fijo or "").strip() or None,
                     "telefono_celular": (tel_cel or "").strip() or None,
