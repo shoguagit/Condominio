@@ -75,6 +75,25 @@ ALTER TABLE servicios
 ALTER COLUMN precio_unitario DROP NOT NULL;
 
 -- ================================================================
+-- Unidad – Propietarios (1 unidad : N propietarios, activos/inactivos)
+-- ================================================================
+CREATE TABLE IF NOT EXISTS unidad_propietarios (
+    id             BIGSERIAL PRIMARY KEY,
+    unidad_id      BIGINT NOT NULL REFERENCES unidades(id) ON DELETE CASCADE,
+    propietario_id BIGINT NOT NULL REFERENCES propietarios(id) ON DELETE CASCADE,
+    activo         BOOLEAN DEFAULT TRUE,
+    es_principal   BOOLEAN DEFAULT FALSE,
+    created_at     TIMESTAMPTZ DEFAULT NOW(),
+    UNIQUE(unidad_id, propietario_id)
+);
+CREATE INDEX IF NOT EXISTS idx_unidad_propietarios_unidad ON unidad_propietarios(unidad_id);
+CREATE INDEX IF NOT EXISTS idx_unidad_propietarios_propietario ON unidad_propietarios(propietario_id);
+
+-- Permitir crear unidad sin propietario ni alícuota (se asignan después)
+ALTER TABLE unidades ALTER COLUMN propietario_id DROP NOT NULL;
+ALTER TABLE unidades ALTER COLUMN alicuota_id DROP NOT NULL;
+
+-- ================================================================
 -- Nuevas tablas
 -- ================================================================
 

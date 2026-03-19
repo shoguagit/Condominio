@@ -50,7 +50,7 @@ PROP_COLUMNS = {
 
 st.markdown("## 👥 Propietarios")
 
-col_main, col_help = st.columns([3, 1])
+col_main, col_help = st.columns([4, 1])
 
 if st.session_state.prop_records is None:
     with col_main:

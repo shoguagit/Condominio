@@ -58,7 +58,7 @@ prov_activos = [p for p in proveedores if p.get("activo")]
 
 st.markdown("## 🧾 Facturas de Proveedor")
 
-col_main, col_help = st.columns([3, 1])
+col_main, col_help = st.columns([4, 1])
 
 with col_help:
     render_help_panel(

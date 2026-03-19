@@ -25,10 +25,13 @@ GLOBAL_CSS = """
 [data-testid="stSidebarNavSeparator"],
 div[data-testid="stSidebarNav"] { display: none !important; }
 
-/* ── Base y layout ──────────────────────────────────── */
+/* ── Base y layout (ancho completo para listados) ─────────────────────────── */
 #MainMenu, footer, header { visibility: hidden; }
-.block-container { padding: 1rem 1.8rem 1.8rem !important; max-width: 100% !important; }
+.block-container { padding: 1rem 1.8rem 1.8rem !important; max-width: 100% !important; width: 100% !important; }
+[data-testid="stAppViewContainer"] { max-width: 100% !important; }
 body, .stApp, .main > div { background-color: #FFFFFF !important; }
+/* Columnas de tabla: permitir que flex use bien el espacio */
+.record-table-actions-row [data-testid="column"] > div { min-width: 0 !important; }
 
 /* Sidebar: ancho mínimo para que no colapse por completo (usuario puede reabrir con flecha) */
 section[data-testid="stSidebar"] {
@@ -481,15 +484,15 @@ def render_sidebar() -> None:
         st.page_link("pages/01_condominios.py",       label="🏢  Condominios")
         st.page_link("pages/12_usuarios.py",          label="🔐  Usuarios")
 
-        # ── Unidades y personas ────────────────────────────────────────────────
+        # ── Flujo por dependencias: Condominio → Unidades → Propietarios → Alícuotas ──
         _group("Unidades y Personas")
         st.page_link("pages/02_unidades.py",          label="🏠  Unidades")
         st.page_link("pages/11_propietarios.py",      label="👥  Propietarios")
+        st.page_link("pages/03_alicuotas.py",         label="📊  Alícuotas")
         st.page_link("pages/10_empleados.py",         label="👷  Empleados")
 
         # ── Configuración financiera ───────────────────────────────────────────
         _group("Configuración Financiera")
-        st.page_link("pages/03_alicuotas.py",         label="📊  Alícuotas")
         st.page_link("pages/07_gastos_fijos.py",      label="📌  Gastos Fijos")
         st.page_link("pages/06_conceptos.py",         label="📋  Conceptos")
         st.page_link("pages/05_servicios.py",         label="🔧  Servicios")
@@ -498,6 +501,7 @@ def render_sidebar() -> None:
         st.page_link("pages/16_movimientos.py",      label="🏦  Movimientos Bancarios")
         st.page_link("pages/17_proceso_mensual.py",  label="🗓️  Proceso Mensual")
         st.page_link("pages/18_estado_cuenta.py",    label="🧾  Estado de Cuenta")
+        st.page_link("pages/19_recibos.py",          label="🧾  Recibos")
 
         # ── Proveedores ────────────────────────────────────────────────────────
         _group("Proveedores")

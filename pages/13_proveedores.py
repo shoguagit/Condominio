@@ -94,7 +94,7 @@ tab_prov, tab_fact = st.tabs(["📄 Proveedores", "🧾 Facturas de Proveedor"])
 # TAB 1 — PROVEEDORES
 # =============================================================================
 with tab_prov:
-    col_main, col_help = st.columns([3, 1])
+    col_main, col_help = st.columns([4, 1])
 
     with col_help:
         render_help_panel(
@@ -326,7 +326,7 @@ with tab_prov:
 # TAB 2 — FACTURAS DE PROVEEDOR
 # =============================================================================
 with tab_fact:
-    col_main_f, col_help_f = st.columns([3, 1])
+    col_main_f, col_help_f = st.columns([4, 1])
 
     with col_help_f:
         render_help_panel(

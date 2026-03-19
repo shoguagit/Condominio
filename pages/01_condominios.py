@@ -73,7 +73,7 @@ render_breadcrumb("Condominios")
 st.markdown("## 🏢 Condominios")
 
 # ── Layout: contenido principal (75%) + panel de ayuda (25%) ─────────────────
-col_main, col_help = st.columns([3, 1])
+col_main, col_help = st.columns([4, 1])
 
 CONDO_COLUMNS = {
     "id":               {"label": "Id",        "width": 60},

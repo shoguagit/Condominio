@@ -144,10 +144,17 @@ def render_record_table(
     )
 
     # ── Filas con botones Ver / Editar / Eliminar (Streamlit, solo ícono 40px) ─
+    # Pesos de columnas: checkbox pequeño + anchos de columns_config + 3 acciones fijas
+    col_weights = [0.4]  # checkbox
+    for col_key in col_keys:
+        w = visible_cols[col_key].get("width", 100)
+        col_weights.append(max(0.5, (w or 100) / 100.0))
+    col_weights.extend([0.5, 0.5, 0.5])  # Ver, Editar, Eliminar
+    n_cols = len(col_weights)
+
     st.markdown('<div class="record-table-actions-row">', unsafe_allow_html=True)
     sel_key = f"rt_selected_{key}"
     selected_indices: set[int] = set(st.session_state.get(sel_key, set()) or [])
-    n_cols = 1 + len(col_keys) + 3  # checkbox + datos + Ver, Editar, Eliminar
     index_map: dict[int, dict] = {}
 
     for row_idx, rec in enumerate(page_data):
@@ -162,7 +169,7 @@ def render_record_table(
             '<div style="border-bottom:1px solid #F0F0F0; padding:6px 0;">',
             unsafe_allow_html=True,
         )
-        cols = st.columns(n_cols)
+        cols = st.columns(col_weights)
         ci = 0
         # Checkbox (visual por ahora)
         with cols[ci]:

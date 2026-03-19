@@ -78,6 +78,7 @@ CREATE TABLE IF NOT EXISTS condominios (
 
 CREATE INDEX IF NOT EXISTS idx_condominios_activo ON condominios(activo);
 
+DROP TRIGGER IF EXISTS trg_condominios_updated_at ON condominios;
 CREATE TRIGGER trg_condominios_updated_at
     BEFORE UPDATE ON condominios
     FOR EACH ROW EXECUTE FUNCTION trigger_set_updated_at();
@@ -103,6 +104,7 @@ CREATE TABLE IF NOT EXISTS usuarios (
 CREATE INDEX IF NOT EXISTS idx_usuarios_condominio ON usuarios(condominio_id);
 CREATE INDEX IF NOT EXISTS idx_usuarios_activo     ON usuarios(activo);
 
+DROP TRIGGER IF EXISTS trg_usuarios_updated_at ON usuarios;
 CREATE TRIGGER trg_usuarios_updated_at
     BEFORE UPDATE ON usuarios
     FOR EACH ROW EXECUTE FUNCTION trigger_set_updated_at();
@@ -133,6 +135,7 @@ CREATE INDEX IF NOT EXISTS idx_proveedores_condominio ON proveedores(condominio_
 CREATE INDEX IF NOT EXISTS idx_proveedores_activo     ON proveedores(activo);
 CREATE INDEX IF NOT EXISTS idx_proveedores_nombre     ON proveedores(nombre);
 
+DROP TRIGGER IF EXISTS trg_proveedores_updated_at ON proveedores;
 CREATE TRIGGER trg_proveedores_updated_at
     BEFORE UPDATE ON proveedores
     FOR EACH ROW EXECUTE FUNCTION trigger_set_updated_at();
@@ -178,6 +181,9 @@ CREATE TABLE IF NOT EXISTS unidades (
 
 CREATE INDEX IF NOT EXISTS idx_unidades_condominio ON unidades(condominio_id);
 CREATE INDEX IF NOT EXISTS idx_unidades_activo     ON unidades(activo);
+
+-- Unidad – Propietarios (1 unidad : N propietarios; ver supabase_migration.sql)
+-- unidad_propietarios(id, unidad_id, propietario_id, activo, es_principal)
 
 
 -- =============================================================================
@@ -325,6 +331,7 @@ CREATE INDEX IF NOT EXISTS idx_facturas_proveedor    ON facturas_proveedor(prove
 CREATE INDEX IF NOT EXISTS idx_facturas_mes_proceso  ON facturas_proveedor(mes_proceso);
 CREATE INDEX IF NOT EXISTS idx_facturas_activo       ON facturas_proveedor(activo);
 
+DROP TRIGGER IF EXISTS trg_facturas_updated_at ON facturas_proveedor;
 CREATE TRIGGER trg_facturas_updated_at
     BEFORE UPDATE ON facturas_proveedor
     FOR EACH ROW EXECUTE FUNCTION trigger_set_updated_at();
@@ -352,6 +359,20 @@ ALTER TABLE facturas_proveedor ENABLE ROW LEVEL SECURITY;
 -- Política: service_role (backend) tiene acceso total
 -- El frontend usa la service_role key desde Python, así que esto es suficiente.
 -- Si en el futuro se usan JWT de usuarios individuales, añadir políticas por auth.uid().
+
+DROP POLICY IF EXISTS "service_role_all" ON condominios;
+DROP POLICY IF EXISTS "service_role_all" ON usuarios;
+DROP POLICY IF EXISTS "service_role_all" ON proveedores;
+DROP POLICY IF EXISTS "service_role_all" ON propietarios;
+DROP POLICY IF EXISTS "service_role_all" ON unidades;
+DROP POLICY IF EXISTS "service_role_all" ON alicuotas;
+DROP POLICY IF EXISTS "service_role_all" ON fondos;
+DROP POLICY IF EXISTS "service_role_all" ON servicios;
+DROP POLICY IF EXISTS "service_role_all" ON conceptos;
+DROP POLICY IF EXISTS "service_role_all" ON gastos_fijos;
+DROP POLICY IF EXISTS "service_role_all" ON conceptos_consumo;
+DROP POLICY IF EXISTS "service_role_all" ON cuentas_bancos;
+DROP POLICY IF EXISTS "service_role_all" ON facturas_proveedor;
 
 CREATE POLICY "service_role_all" ON condominios        FOR ALL USING (true);
 CREATE POLICY "service_role_all" ON usuarios           FOR ALL USING (true);
@@ -390,8 +411,10 @@ CREATE INDEX IF NOT EXISTS idx_empleados_condominio ON empleados(condominio_id);
 CREATE INDEX IF NOT EXISTS idx_empleados_activo     ON empleados(activo);
 
 ALTER TABLE empleados ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS "service_role_all" ON empleados;
 CREATE POLICY "service_role_all" ON empleados FOR ALL USING (true);
 
+DROP TRIGGER IF EXISTS trg_empleados_updated_at ON empleados;
 CREATE TRIGGER trg_empleados_updated_at
     BEFORE UPDATE ON empleados
     FOR EACH ROW EXECUTE FUNCTION trigger_set_updated_at();

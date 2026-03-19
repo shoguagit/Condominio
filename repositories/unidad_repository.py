@@ -12,7 +12,7 @@ class UnidadRepository:
     def get_all(self, condominio_id: int, solo_activos: bool = False) -> list[dict]:
         query = (
             self.client.table(self.table)
-            .select("*, propietarios(id, nombre, cedula)")
+            .select("*, propietarios(id, nombre, cedula, correo)")
             .eq("condominio_id", condominio_id)
             .order("numero")
         )
@@ -24,7 +24,7 @@ class UnidadRepository:
     def get_by_id(self, unidad_id: int) -> dict | None:
         response = (
             self.client.table(self.table)
-            .select("*, propietarios(id, nombre, cedula)")
+            .select("*, propietarios(id, nombre, cedula, correo)")
             .eq("id", unidad_id)
             .single()
             .execute()
@@ -45,35 +45,26 @@ class UnidadRepository:
     @safe_db_operation("unidad.create")
     def create(self, data: dict) -> dict:
         codigo = (data.get("codigo") or "").strip()
-        alicuota_id = data.get("alicuota_id")
-        propietario_id = data.get("propietario_id")
         if not codigo:
             raise DatabaseError("El código de la unidad es obligatorio.")
-        if not alicuota_id:
-            raise DatabaseError("La alícuota es obligatoria.")
-        if not propietario_id:
-            raise DatabaseError("El propietario es obligatorio.")
         if data.get("saldo") is None:
             data["saldo"] = 0.00
+        # propietario_id y alicuota_id son opcionales (se asignan después)
         response = self.client.table(self.table).insert(data).execute()
         return response.data[0]
 
     @safe_db_operation("unidad.update")
     def update(self, unidad_id: int, data: dict) -> dict:
         codigo = (data.get("codigo") or "").strip()
-        alicuota_id = data.get("alicuota_id")
-        propietario_id = data.get("propietario_id")
         if not codigo:
             raise DatabaseError("El código de la unidad es obligatorio.")
-        if not alicuota_id:
-            raise DatabaseError("La alícuota es obligatoria.")
-        if not propietario_id:
-            raise DatabaseError("El propietario es obligatorio.")
         if data.get("saldo") is None:
             data["saldo"] = 0.00
+        # propietario_id y alicuota_id pueden ser null (sin asignar)
+        payload = dict(data)
         response = (
             self.client.table(self.table)
-            .update(data)
+            .update(payload)
             .eq("id", unidad_id)
             .execute()
         )

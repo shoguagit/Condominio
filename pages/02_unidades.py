@@ -4,6 +4,7 @@ from config.supabase_client import get_supabase_client
 from repositories.unidad_repository import UnidadRepository
 from repositories.propietario_repository import PropietarioRepository
 from repositories.alicuota_repository import AlicuotaRepository
+from repositories.unidad_propietario_repository import UnidadPropietarioRepository
 from components.header import render_header
 from components.breadcrumb import render_breadcrumb
 from components.crud_toolbar import init_toolbar_state, get_current_index, set_current_index
@@ -29,9 +30,14 @@ if st.session_state.get("_last_condominio_id") != condominio_id:
 @st.cache_resource
 def get_repos():
     client = get_supabase_client()
-    return UnidadRepository(client), PropietarioRepository(client), AlicuotaRepository(client)
+    return (
+        UnidadRepository(client),
+        PropietarioRepository(client),
+        AlicuotaRepository(client),
+        UnidadPropietarioRepository(client),
+    )
 
-repo_unidad, repo_prop, repo_ali = get_repos()
+repo_unidad, repo_prop, repo_ali, repo_unidad_prop = get_repos()
 
 for k, v in {"uni_modo": None, "uni_records": None}.items():
     if k not in st.session_state:
@@ -66,7 +72,7 @@ UNI_COLUMNS = {
 
 st.markdown("## 🏠 Unidades")
 
-col_main, col_help = st.columns([3, 1])
+col_main, col_help = st.columns([4, 1])
 
 # ── Carga inicial ────────────────────────────────────────────────────────────
 if st.session_state.uni_records is None:
@@ -145,9 +151,10 @@ with col_main:
         st.markdown('<p class="form-card-hint">Campos marcados con * son obligatorios</p>', unsafe_allow_html=True)
         cr = current_rec if is_edit and current_rec else {}
 
-        # Propietario seleccionado por defecto
-        prop_nombres = [p["nombre"] for p in propietarios]
-        prop_ids     = [p["id"]     for p in propietarios]
+        # Propietario: opción "— Sin asignar —" (valor None)
+        SIN_ASIGNAR = "— Sin asignar —"
+        prop_nombres = [SIN_ASIGNAR] + [p["nombre"] for p in propietarios]
+        prop_ids     = [None] + [p["id"] for p in propietarios]
         def_prop_id  = (cr.get("propietarios") or {}).get("id") or cr.get("propietario_id")
         try:
             prop_default = prop_ids.index(def_prop_id) if def_prop_id in prop_ids else 0
@@ -160,9 +167,9 @@ with col_main:
         tipo_cond_default = TIPOS_CONDOMINO.index(cr["tipo_condomino"]) \
             if cr.get("tipo_condomino") in TIPOS_CONDOMINO else 0
 
-        # Alícuota por defecto
-        ali_nombres = [a["descripcion"] for a in alicuotas] if alicuotas else []
-        ali_ids     = [a["id"] for a in alicuotas] if alicuotas else []
+        # Alícuota: opción "— Sin asignar —" (valor None)
+        ali_nombres = [SIN_ASIGNAR] + ([a["descripcion"] for a in alicuotas] if alicuotas else [])
+        ali_ids     = [None] + ([a["id"] for a in alicuotas] if alicuotas else [])
         def_ali_id  = cr.get("alicuota_id")
         try:
             ali_default = ali_ids.index(def_ali_id) if def_ali_id in ali_ids else 0
@@ -206,27 +213,21 @@ with col_main:
                     '<p class="form-section-hdr">Propietario y cuota</p>',
                     unsafe_allow_html=True,
                 )
-                if not alicuotas:
-                    st.warning("⚠️ No hay alícuotas registradas. Registre alícuotas primero.")
-                    alicuota_id = None
-                else:
-                    ali_sel = st.selectbox(
-                        "Alícuota *",
-                        options=ali_nombres,
-                        index=ali_default,
-                    )
-                    alicuota_id = ali_ids[ali_nombres.index(ali_sel)]
+                ali_sel = st.selectbox(
+                    "Alícuota",
+                    options=ali_nombres,
+                    index=ali_default,
+                    help="Opcional al crear; puede asignarse después.",
+                )
+                alicuota_id = ali_ids[ali_nombres.index(ali_sel)]
 
-                if not propietarios:
-                    st.warning("⚠️ No hay propietarios registrados. Registre uno primero.")
-                    propietario_id = None
-                else:
-                    prop_sel = st.selectbox(
-                        "Propietario *",
-                        options=prop_nombres,
-                        index=prop_default,
-                    )
-                    propietario_id = prop_ids[prop_nombres.index(prop_sel)]
+                prop_sel = st.selectbox(
+                    "Propietario principal",
+                    options=prop_nombres,
+                    index=prop_default,
+                    help="Opcional al crear. Una unidad puede tener varios propietarios (editar después).",
+                )
+                propietario_id = prop_ids[prop_nombres.index(prop_sel)]
 
                 tipo_condomino = st.selectbox(
                     "Tipo de condómino *",
@@ -255,12 +256,10 @@ with col_main:
 
         if guardar:
             errors = validate_form(
-                {"codigo": codigo, "alicuota_id": alicuota_id, "numero": numero, "propietario_id": propietario_id},
+                {"codigo": codigo, "numero": numero},
                 {
-                    "codigo":          {"required": True, "max_length": 10},
-                    "alicuota_id":     {"required": True},
-                    "numero":         {"required": True, "max_length": 20},
-                    "propietario_id": {"required": True},
+                    "codigo":  {"required": True, "max_length": 10},
+                    "numero":  {"required": True, "max_length": 20},
                 },
             )
             if errors:
@@ -292,6 +291,77 @@ with col_main:
                     st.rerun()
                 except DatabaseError as e:
                     st.error(f"❌ {e}")
+
+        # ── Propietarios de esta unidad (solo al editar una ya guardada) ───────
+        if is_edit and current_rec and current_rec.get("id"):
+            uid = current_rec["id"]
+            st.markdown(
+                '<p class="form-section-hdr">Propietarios de esta unidad</p>',
+                unsafe_allow_html=True,
+            )
+            try:
+                asignaciones = repo_unidad_prop.get_by_unidad(uid)
+            except Exception:
+                asignaciones = []
+            # Propietarios ya asignados a esta unidad (para excluir del combo)
+            asignados_ids = {a.get("propietario_id") for a in asignaciones}
+            prop_disponibles = [p for p in propietarios if p["id"] not in asignados_ids]
+
+            for a in asignaciones:
+                prop = a.get("propietarios") or {}
+                nombre = prop.get("nombre", "—")
+                es_principal = a.get("es_principal")
+                activo = a.get("activo", True)
+                col_a, col_b = st.columns([3, 1])
+                with col_a:
+                    st.markdown(
+                        f"**{nombre}**"
+                        + (" *(principal)*" if es_principal else "")
+                        + ("" if activo else " *(inactivo)*")
+                    )
+                with col_b:
+                    if not es_principal and st.button(
+                        "Principal", key=f"up_principal_{a['id']}_{uid}", use_container_width=True
+                    ):
+                        try:
+                            repo_unidad_prop.set_principal(uid, a["id"])
+                            pid = a.get("propietario_id")
+                            if pid:
+                                repo_unidad.update(uid, {"propietario_id": pid})
+                            st.session_state.uni_records = None
+                            st.rerun()
+                        except DatabaseError as e:
+                            st.error(str(e))
+                    if st.button("Quitar", key=f"up_quitar_{a['id']}_{uid}", use_container_width=True):
+                        try:
+                            repo_unidad_prop.remove(a["id"])
+                            if a.get("es_principal") and current_rec.get("propietario_id") == a.get("propietario_id"):
+                                repo_unidad.update(uid, {"propietario_id": None})
+                            st.session_state.uni_records = None
+                            st.rerun()
+                        except DatabaseError as e:
+                            st.error(str(e))
+
+            if prop_disponibles:
+                sel = st.selectbox(
+                    "Añadir propietario",
+                    options=[p["nombre"] for p in prop_disponibles],
+                    key=f"up_add_sel_{uid}",
+                )
+                if st.button("Añadir propietario", key=f"up_add_btn_{uid}"):
+                    prop_id = prop_disponibles[[p["nombre"] for p in prop_disponibles].index(sel)]["id"]
+                    try:
+                        es_prim = len(asignaciones) == 0
+                        repo_unidad_prop.add(uid, prop_id, activo=True, es_principal=es_prim)
+                        if es_prim:
+                            repo_unidad.update(uid, {"propietario_id": prop_id})
+                        st.session_state.uni_records = None
+                        st.rerun()
+                    except DatabaseError as e:
+                        st.error(str(e))
+            elif not asignaciones:
+                st.caption("Registre propietarios en el módulo Propietarios y asígnelos aquí.")
+
         st.markdown("</div>", unsafe_allow_html=True)
 
     elif modo not in ("eliminar",):

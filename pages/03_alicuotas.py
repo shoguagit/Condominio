@@ -46,7 +46,7 @@ records = st.session_state.ali_records
 
 st.markdown("## 📊 Alícuotas")
 
-col_main, col_help = st.columns([3, 1])
+col_main, col_help = st.columns([4, 1])
 
 with col_help:
     render_help_panel(
