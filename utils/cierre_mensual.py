@@ -5,9 +5,14 @@ Lógica pura de cierre mensual (Fase 2). Sin I/O ni Streamlit.
 from __future__ import annotations
 
 
-def saldo_nuevo_tras_cierre(saldo_anterior: float, cuota: float, pagado: float) -> float:
-    """Saldo que arrastra la unidad tras aplicar cuota del mes y pagos del período."""
-    return round(float(saldo_anterior) + float(cuota) - float(pagado), 2)
+def saldo_nuevo_tras_cierre(
+    saldo_anterior: float, cuota: float, pagado: float, mora: float = 0.0
+) -> float:
+    """Saldo que arrastra la unidad tras cuota del mes, mora (opcional) y pagos del período."""
+    return round(
+        float(saldo_anterior) + float(cuota) + float(mora) - float(pagado),
+        2,
+    )
 
 
 def etiqueta_estado_cierre_ui(saldo_nuevo: float, pagado: float) -> str:

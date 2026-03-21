@@ -1,6 +1,6 @@
 from supabase import Client
 
-from utils.error_handler import safe_db_operation
+from utils.error_handler import DatabaseError, safe_db_operation
 
 
 class CondominioRepository:
@@ -74,3 +74,36 @@ class CondominioRepository:
             .execute()
         )
         return response.data[0]
+
+    @safe_db_operation("condominio.actualizar_dia_limite")
+    def actualizar_dia_limite(self, condominio_id: int, dia: int) -> dict:
+        """Actualiza el día límite de pago del condominio (1–28)."""
+        if not isinstance(dia, int) or not (1 <= dia <= 28):
+            raise DatabaseError("El día límite de pago debe estar entre 1 y 28.")
+        return (
+            self.client.table(self.table)
+            .update({"dia_limite_pago": dia})
+            .eq("id", condominio_id)
+            .execute()
+        ).data[0]
+
+    @safe_db_operation("condominio.obtener_dia_limite")
+    def obtener_dia_limite(self, condominio_id: int) -> int:
+        """Día límite de pago; por defecto 15 si no está configurado."""
+        row = (
+            self.client.table(self.table)
+            .select("dia_limite_pago")
+            .eq("id", condominio_id)
+            .single()
+            .execute()
+        ).data
+        if not row:
+            return 15
+        d = row.get("dia_limite_pago")
+        if d is None:
+            return 15
+        try:
+            di = int(d)
+            return di if 1 <= di <= 28 else 15
+        except (TypeError, ValueError):
+            return 15

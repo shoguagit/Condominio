@@ -13,6 +13,7 @@ from repositories.proceso_repository import ProcesoMensualRepository
 from repositories.unidad_repository import UnidadRepository
 from repositories.condominio_repository import CondominioRepository
 from repositories.pago_repository import PagoRepository
+from repositories.mora_repository import MoraRepository
 from utils.auth import check_authentication, require_condominio
 from utils.error_handler import DatabaseError
 from utils.validators import validate_periodo, periodo_to_date_str, date_periodo_to_mm_yyyy
@@ -21,7 +22,6 @@ from utils.cierre_mensual import (
     saldo_nuevo_tras_cierre,
     etiqueta_estado_cierre_ui,
     estado_pago_db,
-    eficiencia_cobro,
     puede_generar_cuotas,
     puede_cerrar_mes,
     texto_pasos_cierre,
@@ -47,10 +47,11 @@ def get_repos():
         UnidadRepository(client),
         CondominioRepository(client),
         PagoRepository(client),
+        MoraRepository(client),
     )
 
 
-repo_proc, repo_mov, repo_uni, repo_cond, repo_pago = get_repos()
+repo_proc, repo_mov, repo_uni, repo_cond, repo_pago, repo_mora = get_repos()
 
 st.markdown("## 🗓️ Proceso Mensual")
 
@@ -299,6 +300,9 @@ if st.button("Generar cuotas", type="primary", use_container_width=True, disable
                     "cuota_calculada_bs": cuota,
                     "saldo_anterior_bs": saldo_ant,
                     "pagos_mes_bs": 0.0,
+                    "mora": 0.0,
+                    "mora_bs": 0.0,
+                    "pct_mora": 0.0,
                     "total_a_pagar_bs": total_a_pagar,
                     "estado": "pendiente",
                 }
@@ -323,6 +327,23 @@ if cuotas:
         pagos_por_unidad = {}
 
 if cuotas:
+    try:
+        mora_cfg = repo_mora.obtener_config(condominio_id)
+    except DatabaseError:
+        mora_cfg = {"activa": False, "pct_mora": 0.0}
+    anio_m = int(periodo_db[:4])
+    mes_m = int(periodo_db[5:7])
+    try:
+        mora_aplica_fecha = repo_mora.mora_aplica_hoy(condominio_id, anio_m, mes_m)
+    except DatabaseError:
+        mora_aplica_fecha = False
+    mora_activa_logica = (
+        bool(mora_cfg.get("activa"))
+        and float(mora_cfg.get("pct_mora") or 0) > 0
+        and mora_aplica_fecha
+    )
+    pct_cfg = float(mora_cfg.get("pct_mora") or 0)
+
     st.markdown("#### Tabla de cuotas generadas")
     rows_cuotas = []
     for c in cuotas:
@@ -342,6 +363,45 @@ if cuotas:
         )
     st.dataframe(rows_cuotas, use_container_width=True, hide_index=True)
 
+    with st.expander("⚙️ Configuración de mora del período"):
+        st.info(
+            """
+**Mora** se aplica solo si el propietario tiene **deuda anterior** (saldo anterior > 0).
+Si tiene **crédito a favor**, mora = **Bs. 0** aunque tenga cuota pendiente.
+
+**Base de cálculo:** saldo anterior + cuota del mes × % mora.
+
+Solo aplica si la mora está activa, el % > 0 y la **fecha de hoy** es **posterior** al día límite de pago del período.
+            """.strip()
+        )
+        with st.form("form_cfg_mora_proc"):
+            act_m = st.toggle(
+                "Activar mora este mes",
+                value=bool(mora_cfg.get("activa")),
+                disabled=cerrado,
+            )
+            pct_in = st.number_input(
+                "% mora mensual",
+                min_value=0.0,
+                max_value=100.0,
+                step=0.1,
+                value=float(mora_cfg.get("pct_mora") or 0),
+                disabled=cerrado,
+            )
+            save_m = st.form_submit_button(
+                "Guardar configuración de mora",
+                disabled=cerrado,
+            )
+        if save_m and not cerrado:
+            try:
+                repo_mora.actualizar_config(condominio_id, float(pct_in), bool(act_m))
+                st.success("✅ Configuración de mora guardada.")
+                st.rerun()
+            except DatabaseError as e:
+                st.error(f"❌ {e}")
+            except ValueError as e:
+                st.error(f"❌ {e}")
+
     st.markdown("#### Saldos por unidad (vista pre-cierre)")
     rows_saldos = []
     for c in cuotas:
@@ -351,16 +411,19 @@ if cuotas:
         saldo_ant = float(c.get("saldo_anterior_bs") or 0)
         cuota_v = float(c.get("cuota_calculada_bs") or 0)
         pagado = round(float(pagos_por_unidad.get(uid, 0) or 0), 2)
-        saldo_nuevo = saldo_nuevo_tras_cierre(saldo_ant, cuota_v, pagado)
+        mora_u = 0.0
+        if mora_activa_logica and saldo_ant > 0:
+            mora_u = MoraRepository.calcular_mora_unidad(saldo_ant, cuota_v, pct_cfg)
+        saldo_nuevo = saldo_nuevo_tras_cierre(saldo_ant, cuota_v, pagado, mora_u)
         rows_saldos.append(
             {
                 "Unidad": u.get("codigo") or u.get("numero") or "—",
                 "Propietario": (p.get("nombre") or "—"),
                 "Saldo ant.": saldo_ant,
-                "Cuota Bs.": cuota_v,
-                "Mora Bs.": 0.0,
-                "Pagado Bs.": pagado,
-                "Saldo nuevo Bs.": saldo_nuevo,
+                "Cuota": cuota_v,
+                "Mora Bs.": mora_u,
+                "Pagado": pagado,
+                "Saldo nuevo": saldo_nuevo,
                 "Estado": etiqueta_estado_cierre_ui(saldo_nuevo, pagado),
             }
         )
@@ -369,18 +432,25 @@ if cuotas:
     total_cuotas_emitidas = round(
         sum(float(c.get("cuota_calculada_bs") or 0) for c in cuotas), 2
     )
+    total_mora_gen = round(sum(r["Mora Bs."] for r in rows_saldos), 2)
+    total_cuotas_mora = round(total_cuotas_emitidas + total_mora_gen, 2)
     total_cobrado = round(total_pagos_mes, 2)
-    total_pendiente = round(
-        sum(r["Saldo nuevo Bs."] for r in rows_saldos), 2
+    total_pendiente = round(sum(r["Saldo nuevo"] for r in rows_saldos), 2)
+    eff = (
+        round((total_cobrado / total_cuotas_mora) * 100, 2)
+        if total_cuotas_mora > 0
+        else 0.0
     )
-    eff = eficiencia_cobro(total_cuotas_emitidas, total_cobrado)
 
     st.markdown("#### Resumen financiero (pre-cierre)")
-    m1, m2, m3, m4 = st.columns(4)
-    m1.metric("Total cuotas emitidas (Bs.)", f"{total_cuotas_emitidas:,.2f}")
-    m2.metric("Total cobrado (Bs.)", f"{total_cobrado:,.2f}")
-    m3.metric("Total pendiente (Bs.)", f"{total_pendiente:,.2f}")
-    m4.metric("Eficiencia de cobro %", f"{eff:,.2f}%")
+    r1a, r1b, r1c = st.columns(3)
+    r1a.metric("Total mora generada (Bs.)", f"{total_mora_gen:,.2f}")
+    r1b.metric("Total cuotas emitidas (Bs.)", f"{total_cuotas_emitidas:,.2f}")
+    r1c.metric("Total cuotas + mora (Bs.)", f"{total_cuotas_mora:,.2f}")
+    r2a, r2b, r2c = st.columns(3)
+    r2a.metric("Total cobrado (Bs.)", f"{total_cobrado:,.2f}")
+    r2b.metric("Total pendiente (Bs.)", f"{total_pendiente:,.2f}")
+    r2c.metric("Eficiencia de cobro %", f"{eff:,.2f}%")
 
 st.divider()
 
@@ -413,17 +483,43 @@ if st.session_state.get("confirmar_cierre_mes"):
 
             pagos_u = repo_pago.sum_por_unidad_periodo(condominio_id, periodo_db)
 
+            try:
+                mora_cfg_cierre = repo_mora.obtener_config(condominio_id)
+            except DatabaseError:
+                mora_cfg_cierre = {"activa": False, "pct_mora": 0.0}
+            ay, am = int(periodo_db[:4]), int(periodo_db[5:7])
+            try:
+                mora_aplica_cierre = repo_mora.mora_aplica_hoy(condominio_id, ay, am)
+            except DatabaseError:
+                mora_aplica_cierre = False
+            mora_activa_cierre = (
+                bool(mora_cfg_cierre.get("activa"))
+                and float(mora_cfg_cierre.get("pct_mora") or 0) > 0
+                and mora_aplica_cierre
+            )
+            pct_cierre = float(mora_cfg_cierre.get("pct_mora") or 0)
+
             for c in cuotas:
                 cid = int(c["id"])
                 uid = int(c.get("unidad_id") or 0)
                 saldo_ant = float(c.get("saldo_anterior_bs") or 0)
                 cuota_v = float(c.get("cuota_calculada_bs") or 0)
                 pagos_mes = round(float(pagos_u.get(uid, 0) or 0), 2)
-                saldo_nuevo = saldo_nuevo_tras_cierre(saldo_ant, cuota_v, pagos_mes)
+                mora = 0.0
+                if mora_activa_cierre and saldo_ant > 0:
+                    mora = MoraRepository.calcular_mora_unidad(
+                        saldo_ant, cuota_v, pct_cierre
+                    )
+                saldo_nuevo = saldo_nuevo_tras_cierre(
+                    saldo_ant, cuota_v, pagos_mes, mora
+                )
                 repo_proc.update_cuota_row(
                     cid,
                     {
                         "pagos_mes_bs": pagos_mes,
+                        "mora": mora,
+                        "mora_bs": mora,
+                        "pct_mora": pct_cierre if mora_activa_cierre else 0.0,
                         "total_a_pagar_bs": saldo_nuevo,
                         "estado": "cerrado",
                     },

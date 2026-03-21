@@ -85,6 +85,7 @@ CONDO_COLUMNS = {
     "telefono":         {"label": "Teléfono",  "width": 110},
     "email":            {"label": "Email",     "width": 160},
     "activo":           {"label": "Activo",    "width": 70, "format": "boolean"},
+    "dia_limite_pago":  {"label": "Día límite", "width": 90},
 }
 
 # ── Carga inicial: skeleton y cargar ───────────────────────────────────────────
@@ -137,6 +138,7 @@ with col_main:
         def_email    = current_rec.get("email", "")            if is_edit and current_rec else ""
         def_num_doc  = current_rec.get("numero_documento", "") if is_edit and current_rec else ""
         def_activo   = current_rec.get("activo", True)         if is_edit and current_rec else True
+        def_dia_lim  = int(current_rec.get("dia_limite_pago") or 15) if is_edit and current_rec else 15
 
         with st.form(form_key):
             st.markdown(
@@ -179,6 +181,18 @@ with col_main:
                 st.text_input("Moneda principal", value=moneda_label, disabled=True)
 
                 activo = st.checkbox("Activo", value=def_activo)
+
+                dia_limite_pago = st.number_input(
+                    "Día límite de pago (1-28)",
+                    min_value=1,
+                    max_value=28,
+                    value=def_dia_lim,
+                    step=1,
+                    help=(
+                        "Día del mes hasta el cual se acepta pago sin mora. "
+                        "Pagos después de este día pueden generar intereses según la mora configurada."
+                    ),
+                )
 
             st.markdown(
                 '<p class="form-section-hdr">Documento fiscal</p>',
@@ -274,6 +288,9 @@ with col_main:
                 if is_edit and current_rec:
                     try:
                         repo_condo.update(current_rec["id"], payload)
+                        repo_condo.actualizar_dia_limite(
+                            int(current_rec["id"]), int(dia_limite_pago)
+                        )
                         st.success("✅ Condominio actualizado correctamente.")
                         st.session_state.condo_modo    = None
                         st.session_state.condo_records = None
@@ -282,7 +299,10 @@ with col_main:
                         st.error(f"❌ {e}")
                 else:
                     try:
-                        repo_condo.create(payload)
+                        created = repo_condo.create(payload)
+                        repo_condo.actualizar_dia_limite(
+                            int(created["id"]), int(dia_limite_pago)
+                        )
                         st.success("✅ Condominio creado exitosamente.")
                         st.session_state.condo_modo    = None
                         st.session_state.condo_records = None
@@ -364,6 +384,11 @@ with col_main:
                 st.markdown(f"**Moneda**: {current_rec.get('moneda_principal') or '—'}")
                 st.markdown(f"**Tasa BCV**: Bs. {float(tasa):,.4f}")
                 st.markdown(f"**Estado**: {estado}")
+                dlp = current_rec.get("dia_limite_pago")
+                st.markdown(
+                    f"**Día límite de pago**: "
+                    f"{int(dlp) if dlp is not None else 15} (del mes)"
+                )
 
 with col_help:
     render_help_panel(

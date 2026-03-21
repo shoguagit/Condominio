@@ -7,6 +7,7 @@ from repositories.unidad_repository import UnidadRepository
 from repositories.condominio_repository import CondominioRepository
 from repositories.presupuesto_repository import PresupuestoRepository
 from repositories.proceso_repository import ProcesoMensualRepository
+from repositories.mora_repository import MoraRepository
 from utils.auth import check_authentication, require_condominio
 from utils.error_handler import DatabaseError
 from utils.validators import validate_periodo, periodo_to_date_str
@@ -31,10 +32,11 @@ def get_repos():
         CondominioRepository(client),
         PresupuestoRepository(client),
         ProcesoMensualRepository(client),
+        MoraRepository(client),
     )
 
 
-repo_pago, repo_uni, repo_cond, repo_pres, repo_proc = get_repos()
+repo_pago, repo_uni, repo_cond, repo_pres, repo_proc, repo_mora = get_repos()
 
 st.markdown("## 💳 Pagos y cobros")
 
@@ -142,42 +144,62 @@ u_sel = next(x for x in unidades if int(x["id"]) == unidad_id)
 saldo_u = float(u_sel.get("saldo") or 0)
 pct = float(u_sel.get("indiviso_pct") or 0)
 cuota_m = cuota_bs_desde_presupuesto(presupuesto_mes, pct) if presupuesto_mes else 0.0
-mora = 0.0
+try:
+    mora_cfg = repo_mora.obtener_config(condominio_id)
+except DatabaseError:
+    mora_cfg = {"activa": False, "pct_mora": 0.0}
+_anio = int(periodo_db[:4])
+_mes = int(periodo_db[5:7])
+try:
+    mora_aplica = repo_mora.mora_aplica_hoy(condominio_id, _anio, _mes)
+except DatabaseError:
+    mora_aplica = False
+mora_monto = 0.0
+if mora_aplica and mora_cfg.get("activa") and saldo_u > 0:
+    mora_monto = MoraRepository.calcular_mora_unidad(
+        saldo_u, cuota_m, float(mora_cfg.get("pct_mora") or 0)
+    )
+pct_mora_disp = float(mora_cfg.get("pct_mora") or 0)
 try:
     ya_pagado = repo_pago.get_total_pagado_unidad(unidad_id, periodo_db)
 except DatabaseError:
     ya_pagado = 0.0
 
-total_a_pagar = round(saldo_u + cuota_m + mora - ya_pagado, 2)
+total_a_pagar = round(saldo_u + cuota_m + mora_monto - ya_pagado, 2)
 total_a_pagar_usd = _monto_usd_desde_bs(total_a_pagar, tasa)
 
 st.markdown("### Resumen de cuenta (unidad seleccionada)")
 total_bs_fmt = f"{total_a_pagar:,.2f}"
 if tasa and tasa > 0:
-    total_row_bs = f"{total_bs_fmt}  ≈ USD {total_a_pagar_usd:,.2f}"
+    total_row_bs = f"Bs. {total_bs_fmt}  ≈ USD {total_a_pagar_usd:,.2f}"
 else:
-    total_row_bs = total_bs_fmt
+    total_row_bs = f"Bs. {total_bs_fmt}"
 
+label_intereses = f"Intereses de mora ({pct_mora_disp:g}%)"
 st.table(
     {
         "Concepto": [
             "Saldo mes anterior",
             "Cuota del mes",
-            "Intereses de mora",
+            label_intereses,
             "TOTAL A PAGAR",
             "Pagado hoy (formulario)",
             "SALDO RESULTANTE",
         ],
         "Monto Bs.": [
-            f"{saldo_u:,.2f}",
-            f"{cuota_m:,.2f}",
-            f"{mora:,.2f}",
+            f"Bs. {saldo_u:,.2f}",
+            f"Bs. {cuota_m:,.2f}",
+            f"Bs. {mora_monto:,.2f}",
             total_row_bs,
             "(al registrar)",
             "(al registrar)",
         ],
     }
 )
+if mora_monto == 0.0 and not mora_cfg.get("activa"):
+    st.caption("_Intereses de mora: sin mora configurada._")
+elif mora_monto == 0.0 and saldo_u <= 0:
+    st.caption("_Intereses de mora: crédito a favor — sin mora._")
 if tasa and tasa > 0:
     st.caption(
         f"**TOTAL A PAGAR:** Bs. {total_a_pagar:,.2f} ≈ USD {total_a_pagar_usd:,.2f} "
