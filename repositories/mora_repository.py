@@ -6,7 +6,7 @@ from datetime import date
 
 from supabase import Client
 
-from repositories.condominio_repository import CondominioRepository
+from repositories.condominio_repository import CondominioRepository, obtener_dia_limite_safe
 from utils.error_handler import safe_db_operation
 
 
@@ -99,6 +99,6 @@ class MoraRepository:
         """
         True si hoy es estrictamente posterior al día límite del período (año/mes).
         """
-        dia_limite = self._condo_repo.obtener_dia_limite(condominio_id)
+        dia_limite = obtener_dia_limite_safe(self._condo_repo, condominio_id)
         fecha_limite = date(int(anio), int(mes), int(dia_limite))
         return date.today() > fecha_limite

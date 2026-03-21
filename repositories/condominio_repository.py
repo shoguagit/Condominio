@@ -107,3 +107,18 @@ class CondominioRepository:
             return di if 1 <= di <= 28 else 15
         except (TypeError, ValueError):
             return 15
+
+
+def obtener_dia_limite_safe(repo: CondominioRepository, condominio_id: int) -> int:
+    """
+    Devuelve día límite (1–28) o 15 por defecto.
+    Evita AttributeError si el despliegue tiene una versión antigua del repositorio
+    sin `obtener_dia_limite`, o si falla la consulta (columna aún no migrada, etc.).
+    """
+    obt = getattr(repo, "obtener_dia_limite", None)
+    if not callable(obt):
+        return 15
+    try:
+        return int(obt(condominio_id))
+    except Exception:
+        return 15

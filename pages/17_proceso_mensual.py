@@ -11,7 +11,7 @@ from repositories.unidad_repository import suma_indivisos_si_disponible
 from repositories.movimiento_repository import MovimientoRepository
 from repositories.proceso_repository import ProcesoMensualRepository
 from repositories.unidad_repository import UnidadRepository
-from repositories.condominio_repository import CondominioRepository
+from repositories.condominio_repository import CondominioRepository, obtener_dia_limite_safe
 from repositories.pago_repository import PagoRepository
 from repositories.mora_repository import MoraRepository
 from utils.auth import check_authentication, require_condominio
@@ -235,10 +235,7 @@ try:
     config_mora = repo_mora.obtener_config(condominio_id)
 except DatabaseError:
     config_mora = {"activa": False, "pct_mora": 0.0}
-try:
-    dia_limite = repo_cond.obtener_dia_limite(condominio_id)
-except DatabaseError:
-    dia_limite = 15
+dia_limite = obtener_dia_limite_safe(repo_cond, condominio_id)
 
 with st.expander("⚙️ Configuración de mora del período", expanded=False):
     col1, col2 = st.columns([1, 1])
