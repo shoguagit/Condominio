@@ -87,6 +87,15 @@ def validate_periodo(periodo_str: str) -> tuple[bool, str]:
     return False, "Formato debe ser MM/YYYY"
 
 
+def date_periodo_to_mm_yyyy(periodo_db: str) -> str:
+    """Convierte YYYY-MM-01 (o YYYY-MM-DD) a MM/YYYY para mostrar."""
+    s = (periodo_db or "").strip()
+    parts = s.split("-")
+    if len(parts) >= 2:
+        return f"{parts[1]}/{parts[0]}"
+    return s
+
+
 def periodo_to_date_str(periodo_str: str) -> tuple[bool, str, str | None]:
     """
     Convierte MM/YYYY a YYYY-MM-01 para columnas DATE en Supabase.

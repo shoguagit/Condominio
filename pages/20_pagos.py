@@ -6,6 +6,7 @@ from repositories.pago_repository import PagoRepository
 from repositories.unidad_repository import UnidadRepository
 from repositories.condominio_repository import CondominioRepository
 from repositories.presupuesto_repository import PresupuestoRepository
+from repositories.proceso_repository import ProcesoMensualRepository
 from utils.auth import check_authentication, require_condominio
 from utils.error_handler import DatabaseError
 from utils.validators import validate_periodo, periodo_to_date_str
@@ -29,10 +30,11 @@ def get_repos():
         UnidadRepository(client),
         CondominioRepository(client),
         PresupuestoRepository(client),
+        ProcesoMensualRepository(client),
     )
 
 
-repo_pago, repo_uni, repo_cond, repo_pres = get_repos()
+repo_pago, repo_uni, repo_cond, repo_pres, repo_proc = get_repos()
 
 st.markdown("## 💳 Pagos y cobros")
 
@@ -48,6 +50,14 @@ if not ok_p:
 ok_db, msg_db, periodo_db = periodo_to_date_str(periodo_str)
 if not ok_db or not periodo_db:
     st.error(f"❌ {msg_db}")
+    st.stop()
+
+try:
+    proc_existente = repo_proc.get_existing(condominio_id, periodo_db)
+except DatabaseError:
+    proc_existente = None
+if proc_existente and str(proc_existente.get("estado") or "").lower() == "cerrado":
+    st.error("Este período está cerrado. No se pueden registrar nuevos pagos.")
     st.stop()
 
 try:

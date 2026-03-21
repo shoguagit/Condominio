@@ -7,6 +7,19 @@ class ProcesoMensualRepository:
     def __init__(self, client: Client):
         self.client = client
 
+    @safe_db_operation("proceso.get_existing")
+    def get_existing(self, condominio_id: int, periodo: str) -> dict | None:
+        resp = (
+            self.client.table("procesos_mensuales")
+            .select("*")
+            .eq("condominio_id", condominio_id)
+            .eq("periodo", periodo)
+            .execute()
+        )
+        if resp.data:
+            return resp.data[0]
+        return None
+
     @safe_db_operation("proceso.get_or_create")
     def get_or_create(self, condominio_id: int, periodo: str) -> dict:
         resp = (
@@ -77,6 +90,29 @@ class ProcesoMensualRepository:
             self.client.table("procesos_mensuales")
             .update({"estado": estado})
             .eq("id", proceso_id)
+            .execute()
+        ).data[0]
+
+    @safe_db_operation("proceso.delete_cuotas_for_proceso")
+    def delete_cuotas_for_proceso(self, proceso_id: int) -> None:
+        self.client.table("cuotas_unidad").delete().eq("proceso_id", proceso_id).execute()
+
+    @safe_db_operation("proceso.list_by_condominio")
+    def list_by_condominio(self, condominio_id: int) -> list[dict]:
+        return (
+            self.client.table("procesos_mensuales")
+            .select("*")
+            .eq("condominio_id", condominio_id)
+            .order("periodo", desc=True)
+            .execute()
+        ).data
+
+    @safe_db_operation("proceso.update_cuota_row")
+    def update_cuota_row(self, cuota_id: int, data: dict) -> dict:
+        return (
+            self.client.table("cuotas_unidad")
+            .update(data)
+            .eq("id", cuota_id)
             .execute()
         ).data[0]
 

@@ -1,4 +1,6 @@
 import streamlit as st
+from datetime import datetime, timezone
+from dateutil.relativedelta import relativedelta
 
 from config.supabase_client import get_supabase_client
 from repositories.presupuesto_repository import (
@@ -9,11 +11,21 @@ from repositories.unidad_repository import suma_indivisos_si_disponible
 from repositories.movimiento_repository import MovimientoRepository
 from repositories.proceso_repository import ProcesoMensualRepository
 from repositories.unidad_repository import UnidadRepository
-from repositories.presupuesto_repository import PresupuestoRepository
+from repositories.condominio_repository import CondominioRepository
+from repositories.pago_repository import PagoRepository
 from utils.auth import check_authentication, require_condominio
 from utils.error_handler import DatabaseError
-from utils.validators import validate_periodo, periodo_to_date_str
+from utils.validators import validate_periodo, periodo_to_date_str, date_periodo_to_mm_yyyy
 from utils.indiviso_cuota import cuota_bs_desde_presupuesto, valida_suma_exacta_100_pct, TOLERANCIA_INDIVISO_PCT
+from utils.cierre_mensual import (
+    saldo_nuevo_tras_cierre,
+    etiqueta_estado_cierre_ui,
+    estado_pago_db,
+    eficiencia_cobro,
+    puede_generar_cuotas,
+    puede_cerrar_mes,
+    texto_pasos_cierre,
+)
 from components.header import render_header
 from components.breadcrumb import render_breadcrumb
 
@@ -33,11 +45,12 @@ def get_repos():
         ProcesoMensualRepository(client),
         MovimientoRepository(client),
         UnidadRepository(client),
-        PresupuestoRepository(client),
+        CondominioRepository(client),
+        PagoRepository(client),
     )
 
 
-repo_proc, repo_mov, repo_uni, repo_pres = get_repos()
+repo_proc, repo_mov, repo_uni, repo_cond, repo_pago = get_repos()
 
 st.markdown("## 🗓️ Proceso Mensual")
 
@@ -57,21 +70,81 @@ except DatabaseError as e:
     st.error(f"❌ {e}")
     st.stop()
 
-st.markdown("### Presupuesto del mes")
-# Tras st.rerun() el st.success del click desaparece; mostramos mensaje en la siguiente ejecución.
-if st.session_state.pop("_flash_presupuesto_ok", False):
-    st.success("✅ Presupuesto guardado en la base de datos.")
-st.caption(
-    "Para guardar el presupuesto en base de datos, ejecute `scripts/fase1_migration.sql` "
-    "(tabla `presupuestos`). Si no, el monto solo queda en sesión hasta recargar."
-)
+estado_proc = (proceso.get("estado") or "borrador").lower()
+cerrado = estado_proc == "cerrado"
+
 pres_existente = fetch_presupuesto_si_existe(
     get_supabase_client(), condominio_id, periodo_db
+)
+tiene_presupuesto = bool(pres_existente and float(pres_existente.get("monto_bs") or 0) > 0)
+
+try:
+    cuotas_actuales = repo_proc.get_cuotas(condominio_id, periodo_db)
+except DatabaseError:
+    cuotas_actuales = []
+
+hay_cuotas = len(cuotas_actuales) > 0
+cuotas_generadas = hay_cuotas
+
+try:
+    total_pagos_mes = repo_pago.sum_total_periodo(condominio_id, periodo_db)
+except DatabaseError:
+    total_pagos_mes = 0.0
+hay_pagos_periodo = total_pagos_mes > 0
+
+pasos_lines, paso_actual = texto_pasos_cierre(
+    tiene_presupuesto,
+    cuotas_generadas,
+    hay_pagos_periodo,
+    cerrado,
+)
+
+st.markdown("### Avance del período")
+if cerrado:
+    for linea in pasos_lines:
+        st.write(f"✓ {linea} — listo")
+else:
+    for i, linea in enumerate(pasos_lines, start=1):
+        if i < paso_actual:
+            st.write(f"✓ {linea} — listo")
+        elif i == paso_actual:
+            st.write(f"→ **{linea}** — en curso / pendiente")
+        else:
+            st.write(f"○ {linea}")
+
+if cerrado and proceso.get("closed_at"):
+    fc = proceso.get("closed_at")
+    if isinstance(fc, str) and "T" in fc:
+        fc = fc.split("T")[0]
+    try:
+        y, m, d = str(fc)[:10].split("-")
+        fecha_txt = f"{d}/{m}/{y}"
+    except (ValueError, AttributeError):
+        fecha_txt = str(fc)
+    st.info(f"📌 Período cerrado el {fecha_txt}. Solo lectura.")
+
+if st.session_state.pop("_flash_presupuesto_ok", False):
+    st.success("✅ Presupuesto guardado en la base de datos.")
+if st.session_state.pop("_flash_cierre_ok", False):
+    nm = st.session_state.pop("_flash_cierre_periodo", "")
+    st.success(f"✅ Mes cerrado. Nuevo período: **{nm}**")
+if st.session_state.pop("_flash_generar_cuotas", False):
+    st.success("✅ Cuotas generadas correctamente.")
+
+st.markdown("### Presupuesto del mes")
+st.caption(
+    "Antes del cierre puede usar el monto guardado o ajustarlo al gasto real (egresos del período)."
 )
 default_pres = float(pres_existente["monto_bs"]) if pres_existente else float(
     st.session_state.get("presupuesto_mes") or 0
 )
-col_pr, col_pb = st.columns([2, 1])
+
+try:
+    gasto_real_bs = repo_mov.sum_egresos_periodo(condominio_id, periodo_db)
+except DatabaseError:
+    gasto_real_bs = 0.0
+
+col_pr, col_pb, col_pg = st.columns([2, 1, 1])
 with col_pr:
     monto_pres = st.number_input(
         "Monto presupuesto (Bs.) *",
@@ -80,11 +153,11 @@ with col_pr:
         step=0.01,
         format="%.2f",
         help="Base para cuota por unidad: presupuesto × (indiviso % / 100).",
-        disabled=(proceso.get("estado") == "cerrado"),
+        disabled=cerrado,
         key="proc_presupuesto_input",
     )
 with col_pb:
-    if st.button("Guardar presupuesto", use_container_width=True, disabled=(proceso.get("estado") == "cerrado")):
+    if st.button("Guardar presupuesto", use_container_width=True, disabled=cerrado):
         try:
             upsert_presupuesto_seguro(
                 get_supabase_client(),
@@ -101,6 +174,16 @@ with col_pb:
             st.error(str(e))
         except Exception as e:
             st.error(f"Error inesperado al guardar: {e}")
+with col_pg:
+    if st.button(
+        "Usar gasto real del período",
+        use_container_width=True,
+        disabled=cerrado,
+        help="Precarga la suma de movimientos tipo egreso del período (edite antes de guardar).",
+    ):
+        st.session_state["proc_presupuesto_input"] = round(float(gasto_real_bs), 2)
+        st.session_state.presupuesto_mes = round(float(gasto_real_bs), 2)
+        st.rerun()
 
 st.session_state.presupuesto_mes = float(monto_pres)
 
@@ -112,9 +195,9 @@ if pres_existente:
 else:
     st.caption("_Todavía no hay presupuesto guardado en BD para este período._")
 
-st.markdown(f"**Estado:** {proceso.get('estado', '—')}")
-if proceso.get("estado") == "cerrado":
-    st.warning("Mes CERRADO. No se puede reprocesar ni recalcular.")
+st.caption(f"Suma de **egresos** registrados en el período: **{gasto_real_bs:,.2f}** Bs.")
+
+st.markdown(f"**Estado proceso:** {proceso.get('estado', '—')}")
 st.divider()
 
 try:
@@ -148,9 +231,21 @@ else:
 
 st.divider()
 
-st.markdown("### ⚙️ Procesar mes (calcular cuotas por unidad)")
+st.markdown("### ⚙️ Generar cuotas")
+st.caption(
+    "Genera filas en cuotas_unidad con pagos del mes en cero; al cerrar el mes se consolidan pagos y saldos."
+)
 
-if st.button("Procesar mes", type="primary", use_container_width=True, disabled=(proceso.get("estado") == "cerrado")):
+chk_regen = False
+if hay_cuotas and not cerrado:
+    chk_regen = st.checkbox(
+        "Ya existen cuotas para este período: marque para **regenerarlas** (reemplaza las actuales).",
+        value=False,
+        key="chk_regenerar_cuotas",
+    )
+
+gen_disabled = cerrado or not puede_generar_cuotas(estado_proc)
+if st.button("Generar cuotas", type="primary", use_container_width=True, disabled=gen_disabled):
     try:
         pres_m = float(st.session_state.get("presupuesto_mes") or 0)
         if pres_m <= 0:
@@ -162,8 +257,18 @@ if st.button("Procesar mes", type="primary", use_container_width=True, disabled=
         )
         ok_i, msg_i = valida_suma_exacta_100_pct(suma_i)
         if not ok_i:
-            st.error(f"❌ {msg_i}")
+            st.error(f"❌ Ajuste indivisos antes de generar cuotas. {msg_i}")
             st.stop()
+
+        if hay_cuotas and not chk_regen:
+            st.error(
+                "❌ Ya existen cuotas para este período. ¿Desea regenerarlas? "
+                "Marque la casilla de confirmación y vuelva a pulsar **Generar cuotas**."
+            )
+            st.stop()
+
+        if hay_cuotas and chk_regen:
+            repo_proc.delete_cuotas_for_proceso(int(proceso["id"]))
 
         proceso = repo_proc.update(
             proceso["id"],
@@ -176,15 +281,12 @@ if st.button("Procesar mes", type="primary", use_container_width=True, disabled=
         )
 
         unidades = repo_uni.get_all(condominio_id, solo_activos=True)
-        pagos_por_unidad = repo_mov.sum_ingresos_por_unidad(condominio_id, periodo_db)
-
         for u in unidades:
             pct = float(u.get("indiviso_pct") or 0)
             v_frac = pct / 100.0
             cuota = cuota_bs_desde_presupuesto(pres_m, pct)
-            pagos_mes = round(float(pagos_por_unidad.get(int(u.get("id")), 0) or 0), 2)
             saldo_ant = round(float(u.get("saldo") or 0), 2)
-            total_a_pagar = round(cuota + saldo_ant - pagos_mes, 2)
+            total_a_pagar = round(saldo_ant + cuota, 2)
             repo_proc.upsert_cuota(
                 {
                     "proceso_id": proceso["id"],
@@ -196,78 +298,223 @@ if st.button("Procesar mes", type="primary", use_container_width=True, disabled=
                     "total_gastos_bs": pres_m,
                     "cuota_calculada_bs": cuota,
                     "saldo_anterior_bs": saldo_ant,
-                    "pagos_mes_bs": pagos_mes,
+                    "pagos_mes_bs": 0.0,
                     "total_a_pagar_bs": total_a_pagar,
-                    "estado": "pagado" if total_a_pagar <= 0 else "pendiente",
+                    "estado": "pendiente",
                 }
             )
 
-        st.success("✅ Proceso mensual calculado y cuotas generadas.")
+        st.session_state["_flash_generar_cuotas"] = True
         st.rerun()
     except DatabaseError as e:
         st.error(f"❌ {e}")
 
-st.divider()
-
-st.markdown("### 🔒 Cerrar mes")
-st.caption("Cierra el período: actualiza el saldo de cada unidad y marca movimientos como procesados.")
-
-if st.button("Cerrar mes", use_container_width=True, disabled=(proceso.get("estado") == "cerrado"), type="primary", key="cerrar_mes_btn"):
-    try:
-        if proceso.get("estado") != "procesado":
-            st.error("❌ Primero debe Procesar el mes antes de cerrarlo.")
-            st.stop()
-
-        cuotas = repo_proc.get_cuotas(condominio_id, periodo_db)
-        if not cuotas:
-            st.error("❌ No hay cuotas generadas para cerrar este mes.")
-            st.stop()
-
-        # Actualizar saldo de unidades: saldo_nuevo = total_a_pagar_bs
-        for c in cuotas:
-            uid = c.get("unidad_id")
-            saldo_nuevo = round(float(c.get("total_a_pagar_bs") or 0), 2)
-            repo_uni.update(int(uid), {"saldo": saldo_nuevo})
-
-        # Marcar proceso como cerrado
-        repo_proc.update(proceso["id"], {"estado": "cerrado"})
-
-        # Marcar movimientos del período como procesados
-        repo_mov.mark_periodo_procesado(condominio_id, periodo_db)
-
-        st.success("✅ Mes cerrado. Saldos actualizados y movimientos procesados.")
-        st.rerun()
-    except DatabaseError as e:
-        st.error(f"❌ {e}")
-
-st.markdown("### 📄 Cuotas generadas")
 try:
     cuotas = repo_proc.get_cuotas(condominio_id, periodo_db)
 except DatabaseError as e:
     st.error(f"❌ {e}")
     cuotas = []
 
-if not cuotas:
-    st.info("No hay cuotas aún para este período. Presiona “Procesar mes”.")
-else:
-    for c in cuotas:
-        u = (c.get("unidades") or {})
-        p = (c.get("propietarios") or {})
-        c["_unidad"] = u.get("codigo") or u.get("numero")
-        c["_propietario"] = p.get("nombre")
-    st.dataframe(
-        cuotas,
-        use_container_width=True,
-        hide_index=True,
-        column_config={
-            "_unidad": st.column_config.TextColumn("Unidad"),
-            "_propietario": st.column_config.TextColumn("Propietario"),
-            "alicuota_valor": st.column_config.NumberColumn("Alícuota", format="%.6f"),
-            "cuota_calculada_bs": st.column_config.NumberColumn("Cuota (Bs)", format="%.2f"),
-            "pagos_mes_bs": st.column_config.NumberColumn("Pagos mes (Bs)", format="%.2f"),
-            "saldo_anterior_bs": st.column_config.NumberColumn("Saldo anterior (Bs)", format="%.2f"),
-            "total_a_pagar_bs": st.column_config.NumberColumn("Total a pagar (Bs)", format="%.2f"),
-            "estado": st.column_config.TextColumn("Estado"),
-        },
-    )
+pagos_por_unidad: dict[int, float] = {}
+if cuotas:
+    try:
+        pagos_por_unidad = repo_pago.sum_por_unidad_periodo(condominio_id, periodo_db)
+    except DatabaseError:
+        pagos_por_unidad = {}
 
+if cuotas:
+    st.markdown("#### Tabla de cuotas generadas")
+    rows_cuotas = []
+    for c in cuotas:
+        u = c.get("unidades") or {}
+        p = c.get("propietarios") or {}
+        pct_u = float(c.get("alicuota_valor") or 0) * 100.0
+        rows_cuotas.append(
+            {
+                "Unidad": u.get("codigo") or u.get("numero") or "—",
+                "Propietario": (p.get("nombre") or "—"),
+                "Indiviso %": round(pct_u, 4),
+                "Saldo ant. Bs": float(c.get("saldo_anterior_bs") or 0),
+                "Cuota Bs": float(c.get("cuota_calculada_bs") or 0),
+                "Total Bs": float(c.get("total_a_pagar_bs") or 0),
+                "Estado": c.get("estado") or "—",
+            }
+        )
+    st.dataframe(rows_cuotas, use_container_width=True, hide_index=True)
+
+    st.markdown("#### Saldos por unidad (vista pre-cierre)")
+    rows_saldos = []
+    for c in cuotas:
+        u = c.get("unidades") or {}
+        p = c.get("propietarios") or {}
+        uid = int(c.get("unidad_id") or 0)
+        saldo_ant = float(c.get("saldo_anterior_bs") or 0)
+        cuota_v = float(c.get("cuota_calculada_bs") or 0)
+        pagado = round(float(pagos_por_unidad.get(uid, 0) or 0), 2)
+        saldo_nuevo = saldo_nuevo_tras_cierre(saldo_ant, cuota_v, pagado)
+        rows_saldos.append(
+            {
+                "Unidad": u.get("codigo") or u.get("numero") or "—",
+                "Propietario": (p.get("nombre") or "—"),
+                "Saldo ant.": saldo_ant,
+                "Cuota Bs.": cuota_v,
+                "Mora Bs.": 0.0,
+                "Pagado Bs.": pagado,
+                "Saldo nuevo Bs.": saldo_nuevo,
+                "Estado": etiqueta_estado_cierre_ui(saldo_nuevo, pagado),
+            }
+        )
+    st.dataframe(rows_saldos, use_container_width=True, hide_index=True)
+
+    total_cuotas_emitidas = round(
+        sum(float(c.get("cuota_calculada_bs") or 0) for c in cuotas), 2
+    )
+    total_cobrado = round(total_pagos_mes, 2)
+    total_pendiente = round(
+        sum(r["Saldo nuevo Bs."] for r in rows_saldos), 2
+    )
+    eff = eficiencia_cobro(total_cuotas_emitidas, total_cobrado)
+
+    st.markdown("#### Resumen financiero (pre-cierre)")
+    m1, m2, m3, m4 = st.columns(4)
+    m1.metric("Total cuotas emitidas (Bs.)", f"{total_cuotas_emitidas:,.2f}")
+    m2.metric("Total cobrado (Bs.)", f"{total_cobrado:,.2f}")
+    m3.metric("Total pendiente (Bs.)", f"{total_pendiente:,.2f}")
+    m4.metric("Eficiencia de cobro %", f"{eff:,.2f}%")
+
+st.divider()
+
+st.markdown("### 🔒 Cerrar mes")
+st.caption("Consolida pagos del período, actualiza saldos de unidades y avanza mes_proceso. Irreversible.")
+
+puede_cerrar = puede_cerrar_mes(estado_proc) and len(cuotas) > 0
+cerrar_disabled = cerrado or not puede_cerrar
+
+if st.session_state.get("confirmar_cierre_mes"):
+    prox_mm_yyyy = date_periodo_to_mm_yyyy(
+        (datetime.strptime(periodo_db[:10], "%Y-%m-%d").date() + relativedelta(months=1)).isoformat()
+    )
+    st.warning(
+        f"⚠️ Esta acción es irreversible. Se cerrarán los saldos y se avanzará "
+        f"al período **{prox_mm_yyyy}**. ¿Confirmar?"
+    )
+    c_yes, c_no = st.columns(2)
+    if c_no.button("Cancelar", use_container_width=True):
+        st.session_state.confirmar_cierre_mes = False
+        st.rerun()
+    if c_yes.button("Confirmar cierre definitivo", type="primary", use_container_width=True):
+        try:
+            if estado_proc != "procesado":
+                st.error("❌ El proceso debe estar en estado procesado.")
+                st.stop()
+            if not cuotas:
+                st.error("❌ No hay cuotas generadas.")
+                st.stop()
+
+            pagos_u = repo_pago.sum_por_unidad_periodo(condominio_id, periodo_db)
+
+            for c in cuotas:
+                cid = int(c["id"])
+                uid = int(c.get("unidad_id") or 0)
+                saldo_ant = float(c.get("saldo_anterior_bs") or 0)
+                cuota_v = float(c.get("cuota_calculada_bs") or 0)
+                pagos_mes = round(float(pagos_u.get(uid, 0) or 0), 2)
+                saldo_nuevo = saldo_nuevo_tras_cierre(saldo_ant, cuota_v, pagos_mes)
+                repo_proc.update_cuota_row(
+                    cid,
+                    {
+                        "pagos_mes_bs": pagos_mes,
+                        "total_a_pagar_bs": saldo_nuevo,
+                        "estado": "cerrado",
+                    },
+                )
+                repo_uni.update(
+                    uid,
+                    {
+                        "saldo": saldo_nuevo,
+                        "estado_pago": estado_pago_db(saldo_nuevo, pagos_mes),
+                    },
+                )
+
+            repo_mov.mark_periodo_procesado(condominio_id, periodo_db)
+
+            now_iso = datetime.now(timezone.utc).isoformat()
+            repo_proc.update(
+                int(proceso["id"]),
+                {"estado": "cerrado", "closed_at": now_iso},
+            )
+
+            d_next = datetime.strptime(periodo_db[:10], "%Y-%m-%d").date() + relativedelta(months=1)
+            repo_cond.update(condominio_id, {"mes_proceso": d_next.isoformat()})
+            st.session_state.mes_proceso = date_periodo_to_mm_yyyy(d_next.isoformat())
+            st.session_state.confirmar_cierre_mes = False
+            st.session_state._flash_cierre_ok = True
+            st.session_state._flash_cierre_periodo = date_periodo_to_mm_yyyy(d_next.isoformat())
+            st.rerun()
+        except DatabaseError as e:
+            st.error(f"❌ {e}")
+
+if st.button(
+    "Cerrar mes",
+    use_container_width=True,
+    disabled=cerrar_disabled,
+    type="primary",
+    key="cerrar_mes_btn",
+):
+    if not puede_cerrar:
+        st.error("❌ Solo disponible con proceso en estado **procesado** y cuotas generadas.")
+    else:
+        st.session_state.confirmar_cierre_mes = True
+        st.rerun()
+
+st.divider()
+st.markdown("### 📜 Histórico de períodos")
+try:
+    hist_proc = repo_proc.list_by_condominio(condominio_id)
+except DatabaseError as e:
+    st.error(str(e))
+    hist_proc = []
+
+if not hist_proc:
+    st.caption("No hay procesos mensuales registrados.")
+else:
+    rows_h = []
+    for p in hist_proc:
+        per = p.get("periodo")
+        per_s = str(per)[:10] if per else ""
+        try:
+            pres_h = fetch_presupuesto_si_existe(get_supabase_client(), condominio_id, per_s)
+            pres_bs = float(pres_h["monto_bs"]) if pres_h else 0.0
+        except Exception:
+            pres_bs = 0.0
+        try:
+            cob = repo_pago.sum_total_periodo(condominio_id, per_s)
+        except DatabaseError:
+            cob = 0.0
+        try:
+            cuotas_h = repo_proc.get_cuotas(condominio_id, per_s)
+            pend = round(sum(float(x.get("total_a_pagar_bs") or 0) for x in cuotas_h), 2)
+        except DatabaseError:
+            pend = 0.0
+        ca = p.get("closed_at")
+        if ca:
+            if isinstance(ca, str) and "T" in ca:
+                ca = ca.split("T")[0]
+            try:
+                y, m, d = str(ca)[:10].split("-")
+                ca_txt = f"{d}/{m}/{y}"
+            except ValueError:
+                ca_txt = str(ca)
+        else:
+            ca_txt = "—"
+        rows_h.append(
+            {
+                "Período": date_periodo_to_mm_yyyy(per_s) if per_s else "—",
+                "Presupuesto Bs.": f"{pres_bs:,.2f}",
+                "Total cobrado": f"{cob:,.2f}",
+                "Pendiente": f"{pend:,.2f}",
+                "Estado": p.get("estado") or "—",
+                "Fecha cierre": ca_txt,
+            }
+        )
+    st.dataframe(rows_h, use_container_width=True, hide_index=True)

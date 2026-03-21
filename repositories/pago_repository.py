@@ -43,6 +43,35 @@ class PagoRepository:
             .execute()
         ).data
 
+    @safe_db_operation("pago.sum_total_periodo")
+    def sum_total_periodo(self, condominio_id: int, periodo: str) -> float:
+        rows = (
+            self.client.table(self.table)
+            .select("monto_bs")
+            .eq("condominio_id", condominio_id)
+            .eq("periodo", periodo)
+            .execute()
+        ).data
+        return float(sum(float(r.get("monto_bs") or 0) for r in (rows or [])))
+
+    @safe_db_operation("pago.sum_por_unidad_periodo")
+    def sum_por_unidad_periodo(self, condominio_id: int, periodo: str) -> dict[int, float]:
+        rows = (
+            self.client.table(self.table)
+            .select("unidad_id, monto_bs")
+            .eq("condominio_id", condominio_id)
+            .eq("periodo", periodo)
+            .execute()
+        ).data
+        out: dict[int, float] = {}
+        for r in rows or []:
+            uid = r.get("unidad_id")
+            if uid is None:
+                continue
+            k = int(uid)
+            out[k] = out.get(k, 0.0) + float(r.get("monto_bs") or 0)
+        return out
+
     @safe_db_operation("pago.get_total_pagado_unidad")
     def get_total_pagado_unidad(self, unidad_id: int, periodo: str) -> float:
         rows = (

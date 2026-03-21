@@ -40,6 +40,18 @@ class MovimientoRepository:
             query = query.eq("estado", estado)
         return query.execute().data
 
+    @safe_db_operation("movimiento.sum_egresos_periodo")
+    def sum_egresos_periodo(self, condominio_id: int, periodo: str) -> float:
+        rows = (
+            self.client.table(self.table)
+            .select("monto_bs")
+            .eq("condominio_id", condominio_id)
+            .eq("periodo", periodo)
+            .eq("tipo", "egreso")
+            .execute()
+        ).data
+        return float(sum(float(r.get("monto_bs") or 0) for r in (rows or [])))
+
     @safe_db_operation("movimiento.sum_ingresos_por_unidad")
     def sum_ingresos_por_unidad(self, condominio_id: int, periodo: str) -> dict[int, float]:
         rows = (
