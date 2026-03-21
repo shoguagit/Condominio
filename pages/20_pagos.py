@@ -1,6 +1,7 @@
 import streamlit as st
 
 from config.supabase_client import get_supabase_client
+from repositories.presupuesto_repository import fetch_presupuesto_si_existe
 from repositories.pago_repository import PagoRepository
 from repositories.unidad_repository import UnidadRepository
 from repositories.condominio_repository import CondominioRepository
@@ -57,11 +58,9 @@ except DatabaseError as e:
 
 tasa = float(condominio.get("tasa_cambio") or 0) if condominio else 0.0
 
-pres_row = None
-try:
-    pres_row = repo_pres.get_by_periodo(condominio_id, periodo_db)
-except DatabaseError:
-    pass
+pres_row = fetch_presupuesto_si_existe(
+    get_supabase_client(), condominio_id, periodo_db
+)
 presupuesto_mes = float(pres_row["monto_bs"]) if pres_row else float(st.session_state.get("presupuesto_mes") or 0)
 if pres_row:
     st.session_state.presupuesto_mes = presupuesto_mes

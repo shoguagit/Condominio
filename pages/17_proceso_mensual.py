@@ -1,6 +1,7 @@
 import streamlit as st
 
 from config.supabase_client import get_supabase_client
+from repositories.presupuesto_repository import fetch_presupuesto_si_existe
 from repositories.movimiento_repository import MovimientoRepository
 from repositories.proceso_repository import ProcesoMensualRepository
 from repositories.unidad_repository import UnidadRepository
@@ -57,7 +58,9 @@ st.caption(
     "Para guardar el presupuesto en base de datos, ejecute `scripts/fase1_migration.sql` "
     "(tabla `presupuestos`). Si no, el monto solo queda en sesión hasta recargar."
 )
-pres_existente = repo_pres.get_by_periodo(condominio_id, periodo_db)
+pres_existente = fetch_presupuesto_si_existe(
+    get_supabase_client(), condominio_id, periodo_db
+)
 default_pres = float(pres_existente["monto_bs"]) if pres_existente else float(
     st.session_state.get("presupuesto_mes") or 0
 )
