@@ -90,15 +90,18 @@ class CondominioRepository:
     @safe_db_operation("condominio.obtener_dia_limite")
     def obtener_dia_limite(self, condominio_id: int) -> int:
         """Día límite de pago; por defecto 15 si no está configurado."""
-        row = (
+        # Sin .single(): PostgREST devuelve error (PGRST116) si no hay exactamente 1 fila.
+        resp = (
             self.client.table(self.table)
             .select("dia_limite_pago")
             .eq("id", condominio_id)
-            .single()
+            .limit(1)
             .execute()
-        ).data
-        if not row:
+        )
+        rows = resp.data or []
+        if not rows:
             return 15
+        row = rows[0]
         d = row.get("dia_limite_pago")
         if d is None:
             return 15
@@ -120,5 +123,7 @@ def obtener_dia_limite_safe(repo: CondominioRepository, condominio_id: int) -> i
         return 15
     try:
         return int(obt(condominio_id))
-    except Exception:
+    except (KeyboardInterrupt, SystemExit):
+        raise
+    except BaseException:
         return 15

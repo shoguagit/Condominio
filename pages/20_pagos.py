@@ -152,7 +152,7 @@ _anio = int(periodo_db[:4])
 _mes = int(periodo_db[5:7])
 try:
     mora_aplica = repo_mora.mora_aplica_hoy(condominio_id, _anio, _mes)
-except DatabaseError:
+except Exception:
     mora_aplica = False
 mora_monto = 0.0
 if mora_aplica and mora_cfg.get("activa") and saldo_u > 0:
