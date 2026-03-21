@@ -1,6 +1,10 @@
+import logging
+
 from supabase import Client
 
 from utils.error_handler import safe_db_operation
+
+logger = logging.getLogger(__name__)
 
 
 class PresupuestoRepository:
@@ -8,18 +12,25 @@ class PresupuestoRepository:
         self.client = client
         self.table = "presupuestos"
 
-    @safe_db_operation("presupuesto.get_by_periodo")
     def get_by_periodo(self, condominio_id: int, periodo: str) -> dict | None:
-        resp = (
-            self.client.table(self.table)
-            .select("*")
-            .eq("condominio_id", condominio_id)
-            .eq("periodo", periodo)
-            .execute()
-        )
-        if resp.data:
-            return resp.data[0]
-        return None
+        """
+        Sin safe_db_operation: si la tabla `presupuestos` no existe (migración no aplicada),
+        devuelve None en lugar de tumbar la página (p. ej. Streamlit Cloud).
+        """
+        try:
+            resp = (
+                self.client.table(self.table)
+                .select("*")
+                .eq("condominio_id", condominio_id)
+                .eq("periodo", periodo)
+                .execute()
+            )
+            if resp.data:
+                return resp.data[0]
+            return None
+        except Exception as e:
+            logger.warning("presupuesto.get_by_periodo omitido: %s", e)
+            return None
 
     @safe_db_operation("presupuesto.upsert")
     def upsert(self, condominio_id: int, periodo: str, monto_bs: float, descripcion: str | None = None) -> dict:

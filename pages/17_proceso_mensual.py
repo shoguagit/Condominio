@@ -53,11 +53,11 @@ except DatabaseError as e:
     st.stop()
 
 st.markdown("### Presupuesto del mes")
-pres_existente = None
-try:
-    pres_existente = repo_pres.get_by_periodo(condominio_id, periodo_db)
-except DatabaseError:
-    pass
+st.caption(
+    "Para guardar el presupuesto en base de datos, ejecute `scripts/fase1_migration.sql` "
+    "(tabla `presupuestos`). Si no, el monto solo queda en sesión hasta recargar."
+)
+pres_existente = repo_pres.get_by_periodo(condominio_id, periodo_db)
 default_pres = float(pres_existente["monto_bs"]) if pres_existente else float(
     st.session_state.get("presupuesto_mes") or 0
 )
