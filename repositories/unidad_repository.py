@@ -1,6 +1,7 @@
 from supabase import Client
 
 from utils.error_handler import safe_db_operation, DatabaseError
+from utils.indiviso_cuota import cuota_bs_desde_presupuesto
 
 
 class UnidadRepository:
@@ -97,3 +98,56 @@ class UnidadRepository:
             .execute()
         )
         return response.data[0]
+
+    @safe_db_operation("unidad.get_suma_indivisos")
+    def get_suma_indivisos(self, condominio_id: int, exclude_id: int | None = None) -> float:
+        """Suma total de indiviso_pct (%) del condominio; exclude_id omite una unidad (edición)."""
+        rows = (
+            self.client.table(self.table)
+            .select("id,indiviso_pct")
+            .eq("condominio_id", condominio_id)
+            .execute()
+        ).data
+        total = 0.0
+        for r in rows or []:
+            if exclude_id is not None and r.get("id") == exclude_id:
+                continue
+            total += float(r.get("indiviso_pct") or 0)
+        return round(total, 4)
+
+    def get_disponible_indiviso(self, condominio_id: int, exclude_id: int | None = None) -> float:
+        """100% − suma actual de indivisos (sin la unidad excluida)."""
+        return round(100.0 - self.get_suma_indivisos(condominio_id, exclude_id), 4)
+
+    @safe_db_operation("unidad.get_indicadores")
+    def get_indicadores(self, condominio_id: int) -> dict:
+        """total unidades, al_dia, morosos, pct_asignado (suma indiviso %)."""
+        rows = (
+            self.client.table(self.table)
+            .select("estado_pago,indiviso_pct")
+            .eq("condominio_id", condominio_id)
+            .execute()
+        ).data
+        rows = rows or []
+        total = len(rows)
+        al_dia = sum(1 for r in rows if (r.get("estado_pago") or "al_dia") == "al_dia")
+        morosos = sum(1 for r in rows if (r.get("estado_pago") or "") == "moroso")
+        pct_asignado = round(sum(float(r.get("indiviso_pct") or 0) for r in rows), 4)
+        return {
+            "total": total,
+            "al_dia": al_dia,
+            "morosos": morosos,
+            "pct_asignado": pct_asignado,
+        }
+
+    def get_with_cuota(self, condominio_id: int, presupuesto_mes: float) -> list[dict]:
+        """Unidades con _cuota_bs calculada (presupuesto × indiviso/100)."""
+        rows = self.get_all(condominio_id)
+        pres = float(presupuesto_mes or 0)
+        for r in rows:
+            pct = float(r.get("indiviso_pct") or 0)
+            if pres > 0:
+                r["_cuota_bs"] = cuota_bs_desde_presupuesto(pres, pct)
+            else:
+                r["_cuota_bs"] = None
+        return rows

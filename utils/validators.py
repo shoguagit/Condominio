@@ -100,7 +100,21 @@ def periodo_to_date_str(periodo_str: str) -> tuple[bool, str, str | None]:
         mm, yyyy = s.split("/")
         return True, "", f"{yyyy}-{mm}-01"
     return True, "", s
-    return True, ""
+
+
+def validate_cedula_o_rif(value: str) -> tuple[bool, str]:
+    """
+    Cédula venezolana V-12345678 o RIF J-12345678-9.
+    Vacío = válido (campo opcional).
+    """
+    if not value or not str(value).strip():
+        return True, ""
+    s = str(value).strip().upper()
+    if re.match(r"^[VE]-\d{6,9}$", s):
+        return True, ""
+    if re.match(r"^[VJGECP]-\d{8}-\d$", s):
+        return True, ""
+    return False, "Formato: V-12345678 o J-12345678-9"
 
 
 def validate_alicuota_valor(valor: float) -> tuple[bool, str]:

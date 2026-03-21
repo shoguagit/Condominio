@@ -484,32 +484,31 @@ def render_sidebar() -> None:
         st.page_link("pages/01_condominios.py",       label="🏢  Condominios")
         st.page_link("pages/12_usuarios.py",          label="🔐  Usuarios")
 
-        # ── Flujo por dependencias: Condominio → Unidades → Propietarios → Alícuotas ──
         _group("Unidades y Personas")
         st.page_link("pages/02_unidades.py",          label="🏠  Unidades")
         st.page_link("pages/11_propietarios.py",      label="👥  Propietarios")
-        st.page_link("pages/03_alicuotas.py",         label="📊  Alícuotas")
         st.page_link("pages/10_empleados.py",         label="👷  Empleados")
 
-        # ── Configuración financiera ───────────────────────────────────────────
         _group("Configuración Financiera")
-        st.page_link("pages/07_gastos_fijos.py",      label="📌  Gastos Fijos")
+        st.page_link("pages/03_alicuotas.py",         label="📊  Alícuotas")
         st.page_link("pages/06_conceptos.py",         label="📋  Conceptos")
         st.page_link("pages/05_servicios.py",         label="🔧  Servicios")
+        st.page_link("pages/07_gastos_fijos.py",      label="📌  Gastos Fijos")
+
+        _group("Operación mensual")
+        st.page_link("pages/20_pagos.py",             label="💳  Pagos y Cobros")
+        st.page_link("pages/16_movimientos.py",       label="🏦  Movimientos Bancarios")
+        st.page_link("pages/17_proceso_mensual.py",   label="🗓️  Proceso Mensual")
+        st.page_link("pages/18_estado_cuenta.py",     label="🧾  Estado de Cuenta")
         st.page_link("pages/08_conceptos_consumo.py", label="⚡  Consumo")
         st.page_link("pages/09_cuentas_bancos.py",    label="🏦  Cuentas / Bancos")
-        st.page_link("pages/16_movimientos.py",      label="🏦  Movimientos Bancarios")
-        st.page_link("pages/17_proceso_mensual.py",  label="🗓️  Proceso Mensual")
-        st.page_link("pages/18_estado_cuenta.py",    label="🧾  Estado de Cuenta")
-        st.page_link("pages/19_recibos.py",          label="🧾  Recibos")
 
-        # ── Proveedores ────────────────────────────────────────────────────────
         _group("Proveedores")
         st.page_link("pages/13_proveedores.py",       label="📄  Proveedores")
         st.page_link("pages/14_facturas.py",          label="🧾  Facturas")
 
-        # ── Reportes ───────────────────────────────────────────────────────────
         _group("Reportes")
+        st.page_link("pages/19_recibos.py",           label="🧾  Recibos")
         st.page_link("pages/15_reportes.py",          label="📈  Reportes")
 
         # ── Logout ─────────────────────────────────────────────────────────────

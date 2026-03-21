@@ -11,11 +11,23 @@ from components.crud_toolbar import get_current_index, set_current_index
 from components.styles import render_empty_state
 
 
-def _apply_search(data: list[dict], field: str, term: str) -> list[dict]:
-    if not term or not field:
+def _apply_search(
+    data: list[dict],
+    field: str,
+    term: str,
+    fields: list[str] | None = None,
+) -> list[dict]:
+    if not term:
+        return data
+    cols = fields if fields else ([field] if field else [])
+    if not cols:
         return data
     term_lower = term.lower()
-    return [row for row in data if term_lower in str(row.get(field, "")).lower()]
+    return [
+        row
+        for row in data
+        if any(term_lower in str(row.get(c, "")).lower() for c in cols)
+    ]
 
 
 def _format_display(value: Any, fmt: str | None) -> str:
@@ -36,6 +48,7 @@ def render_record_table(
     key: str,
     columns_config: dict[str, dict],
     search_field: str = "",
+    search_fields: list[str] | None = None,
     caption: str = "",
     modo_key: str | None = None,
     on_incluir: Callable[[], None] | None = None,
@@ -69,7 +82,9 @@ def render_record_table(
     if page_key not in st.session_state:
         st.session_state[page_key] = 0
 
-    filtered = _apply_search(data, search_field, st.session_state[search_key])
+    filtered = _apply_search(
+        data, search_field, st.session_state[search_key], search_fields
+    )
     total_filtered = len(filtered)
 
     # ── Barra: búsqueda + Nuevo (misma fila, estilo corporativo) + contador ───
@@ -79,7 +94,11 @@ def render_record_table(
             "Buscar",
             value=st.session_state[search_key],
             key=f"rt_input_{key}",
-            placeholder=f"Filtrar por {search_field}..." if search_field else "Buscar...",
+            placeholder=(
+                "Código o propietario..."
+                if search_fields
+                else (f"Filtrar por {search_field}..." if search_field else "Buscar...")
+            ),
             label_visibility="collapsed",
         )
         if search_term != st.session_state[search_key]:

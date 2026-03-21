@@ -3,11 +3,12 @@ import streamlit as st
 from config.supabase_client import get_supabase_client
 from repositories.movimiento_repository import MovimientoRepository
 from repositories.proceso_repository import ProcesoMensualRepository
-from repositories.alicuota_repository import AlicuotaRepository
 from repositories.unidad_repository import UnidadRepository
+from repositories.presupuesto_repository import PresupuestoRepository
 from utils.auth import check_authentication, require_condominio
 from utils.error_handler import DatabaseError
-from utils.validators import validate_periodo, validate_suma_alicuotas, periodo_to_date_str
+from utils.validators import validate_periodo, periodo_to_date_str
+from utils.indiviso_cuota import cuota_bs_desde_presupuesto, valida_suma_exacta_100_pct, TOLERANCIA_INDIVISO_PCT
 from components.header import render_header
 from components.breadcrumb import render_breadcrumb
 
@@ -26,12 +27,12 @@ def get_repos():
     return (
         ProcesoMensualRepository(client),
         MovimientoRepository(client),
-        AlicuotaRepository(client),
         UnidadRepository(client),
+        PresupuestoRepository(client),
     )
 
 
-repo_proc, repo_mov, repo_ali, repo_uni = get_repos()
+repo_proc, repo_mov, repo_uni, repo_pres = get_repos()
 
 st.markdown("## 🗓️ Proceso Mensual")
 
@@ -50,6 +51,39 @@ try:
 except DatabaseError as e:
     st.error(f"❌ {e}")
     st.stop()
+
+st.markdown("### Presupuesto del mes")
+pres_existente = None
+try:
+    pres_existente = repo_pres.get_by_periodo(condominio_id, periodo_db)
+except DatabaseError:
+    pass
+default_pres = float(pres_existente["monto_bs"]) if pres_existente else float(
+    st.session_state.get("presupuesto_mes") or 0
+)
+col_pr, col_pb = st.columns([2, 1])
+with col_pr:
+    monto_pres = st.number_input(
+        "Monto presupuesto (Bs.) *",
+        min_value=0.0,
+        value=max(0.0, default_pres),
+        step=0.01,
+        format="%.2f",
+        help="Base para cuota por unidad: presupuesto × (indiviso % / 100).",
+        disabled=(proceso.get("estado") == "cerrado"),
+        key="proc_presupuesto_input",
+    )
+with col_pb:
+    if st.button("Guardar presupuesto", use_container_width=True, disabled=(proceso.get("estado") == "cerrado")):
+        try:
+            repo_pres.upsert(condominio_id, periodo_db, monto_pres, None)
+            st.session_state.presupuesto_mes = float(monto_pres)
+            st.success("Presupuesto guardado.")
+            st.rerun()
+        except DatabaseError as e:
+            st.error(str(e))
+
+st.session_state.presupuesto_mes = float(monto_pres)
 
 st.markdown(f"**Estado:** {proceso.get('estado', '—')}")
 if proceso.get("estado") == "cerrado":
@@ -71,14 +105,17 @@ col1.metric("Total gastos (Bs)", f"{total_gastos_bs:,.2f}")
 col2.metric("Fondo reserva 10% (Bs)", f"{fondo_reserva_bs:,.2f}")
 col3.metric("Total facturable (Bs)", f"{total_facturable_bs:,.2f}")
 
-st.markdown("### 📊 Validación de alícuotas")
-alicuotas = repo_ali.get_all(condominio_id, solo_activos=True)
-valores = [float(a.get("total_alicuota") or 0) for a in alicuotas]
-ok_s, msg_s = validate_suma_alicuotas(valores)
+st.markdown("### 📊 Validación de indivisos (%)")
+suma_ind = repo_uni.get_suma_indivisos(condominio_id, exclude_id=None)
+ok_s, msg_s = valida_suma_exacta_100_pct(suma_ind)
 if not ok_s:
-    st.error(f"❌ {msg_s}")
-    st.stop()
-st.success("✅ Suma de alícuotas válida (≈ 1.00).")
+    st.warning(
+        f"⚠️ {msg_s} "
+        f"(tolerancia ±{TOLERANCIA_INDIVISO_PCT:.2f} pp). "
+        "Ajuste indivisos en Unidades antes de procesar."
+    )
+else:
+    st.success("✅ Suma de indivisos = 100,00% (± tolerancia).")
 
 st.divider()
 
@@ -86,7 +123,17 @@ st.markdown("### ⚙️ Procesar mes (calcular cuotas por unidad)")
 
 if st.button("Procesar mes", type="primary", use_container_width=True, disabled=(proceso.get("estado") == "cerrado")):
     try:
-        # actualizar resumen del proceso
+        pres_m = float(st.session_state.get("presupuesto_mes") or 0)
+        if pres_m <= 0:
+            st.error("❌ Defina y guarde un presupuesto del mes mayor a cero.")
+            st.stop()
+
+        suma_i = repo_uni.get_suma_indivisos(condominio_id, exclude_id=None)
+        ok_i, msg_i = valida_suma_exacta_100_pct(suma_i)
+        if not ok_i:
+            st.error(f"❌ {msg_i}")
+            st.stop()
+
         proceso = repo_proc.update(
             proceso["id"],
             {
@@ -98,15 +145,12 @@ if st.button("Procesar mes", type="primary", use_container_width=True, disabled=
         )
 
         unidades = repo_uni.get_all(condominio_id, solo_activos=True)
-        # Map alícuota_id -> valor
-        ali_val = {a["id"]: float(a.get("total_alicuota") or 0) for a in alicuotas}
-
         pagos_por_unidad = repo_mov.sum_ingresos_por_unidad(condominio_id, periodo_db)
 
         for u in unidades:
-            alicuota_id = u.get("alicuota_id")
-            v = float(ali_val.get(alicuota_id) or 0)
-            cuota = round(total_facturable_bs * v, 2)
+            pct = float(u.get("indiviso_pct") or 0)
+            v_frac = pct / 100.0
+            cuota = cuota_bs_desde_presupuesto(pres_m, pct)
             pagos_mes = round(float(pagos_por_unidad.get(int(u.get("id")), 0) or 0), 2)
             saldo_ant = round(float(u.get("saldo") or 0), 2)
             total_a_pagar = round(cuota + saldo_ant - pagos_mes, 2)
@@ -117,8 +161,8 @@ if st.button("Procesar mes", type="primary", use_container_width=True, disabled=
                     "propietario_id": u.get("propietario_id"),
                     "condominio_id": condominio_id,
                     "periodo": periodo_db,
-                    "alicuota_valor": v,
-                    "total_gastos_bs": total_facturable_bs,
+                    "alicuota_valor": v_frac,
+                    "total_gastos_bs": pres_m,
                     "cuota_calculada_bs": cuota,
                     "saldo_anterior_bs": saldo_ant,
                     "pagos_mes_bs": pagos_mes,

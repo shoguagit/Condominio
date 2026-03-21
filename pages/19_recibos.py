@@ -11,7 +11,6 @@ from repositories.condominio_repository import CondominioRepository
 from repositories.unidad_repository import UnidadRepository
 from repositories.movimiento_repository import MovimientoRepository
 from repositories.proceso_repository import ProcesoMensualRepository
-from repositories.alicuota_repository import AlicuotaRepository
 from utils.auth import check_authentication, require_condominio
 from utils.error_handler import DatabaseError
 from utils.validators import validate_periodo, periodo_to_date_str
@@ -34,11 +33,10 @@ def get_repos():
         UnidadRepository(client),
         MovimientoRepository(client),
         ProcesoMensualRepository(client),
-        AlicuotaRepository(client),
     )
 
 
-repo_cond, repo_uni, repo_mov, repo_proc, repo_ali = get_repos()
+repo_cond, repo_uni, repo_mov, repo_proc = get_repos()
 
 st.markdown("## 🧾 Relación de Gastos (Recibo)")
 
@@ -74,8 +72,8 @@ except DatabaseError as e:
     st.error(f"❌ {e}")
     st.stop()
 
-# Solo unidades con alícuota (para poder calcular recibo)
-unidades_con_alicuota = [u for u in unidades if u.get("alicuota_id")]
+# Unidades con indiviso % definido
+unidades_con_alicuota = [u for u in unidades if float(u.get("indiviso_pct") or 0) > 0]
 opts = ["— Todas las unidades —"]
 uid_map = {}
 for u in unidades_con_alicuota:
@@ -87,7 +85,7 @@ for u in unidades_con_alicuota:
     uid_map[label] = u.get("id")
 
 if len(opts) == 1:
-    st.warning("No hay unidades con alícuota asignada. Asigne alícuota en el módulo Unidades.")
+    st.warning("No hay unidades con indiviso % en el módulo Unidades.")
     st.stop()
 
 sel = st.selectbox("Unidad", options=opts)
@@ -122,9 +120,6 @@ total_gastos_bs = sum(l["total_bs"] for l in lineas)
 fondo_reserva_bs = round(total_gastos_bs * 0.10, 2)
 total_relacionado_bs = round(total_gastos_bs + fondo_reserva_bs, 2)
 
-# Alícuotas por id
-alicuotas = {a["id"]: float(a.get("total_alicuota") or 0) for a in repo_ali.get_all(condominio_id, solo_activos=True)}
-
 # Cuotas ya calculadas (proceso mensual) si existen
 try:
     cuotas_periodo = repo_proc.get_cuotas(condominio_id, periodo_db)
@@ -153,8 +148,8 @@ def render_recibo(unidad: dict):
     prop = unidad.get("propietarios") or {}
     nombre_prop = (prop.get("nombre") or "—").strip()
     correo_prop = (prop.get("correo") or "").strip()
-    alicuota_id = unidad.get("alicuota_id")
-    alicuota_valor = alicuotas.get(alicuota_id) or 0.0
+    indiviso_pct = float(unidad.get("indiviso_pct") or 0)
+    alicuota_valor = indiviso_pct / 100.0
 
     cuota_row = cuotas_por_unidad.get(uid)
     if cuota_row:
@@ -181,7 +176,7 @@ def render_recibo(unidad: dict):
         if correo_prop:
             st.caption(f"Correo: {correo_prop}")
         st.caption(f"Emisión: {fecha_emision}")
-        st.caption(f"Inmueble: {codigo}  |  Alicuota: {alicuota_valor}")
+        st.caption(f"Inmueble: {codigo}  |  Indiviso: {indiviso_pct}%")
         st.caption(f"Monto (Bs): **{cuota_mes_bs:,.2f}**  |  Acumulado (Bs): **{acumulado_bs:,.2f}**")
 
     # Tabla conceptos
