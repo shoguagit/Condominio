@@ -1,4 +1,5 @@
 import streamlit as st
+import pandas as pd
 
 from config.supabase_client import get_supabase_client
 from repositories.presupuesto_repository import fetch_presupuesto_si_existe
@@ -176,7 +177,7 @@ else:
     total_row_bs = f"Bs. {total_bs_fmt}"
 
 label_intereses = f"Intereses de mora ({pct_mora_disp:g}%)"
-st.table(
+df_resumen = pd.DataFrame(
     {
         "Concepto": [
             "Saldo mes anterior",
@@ -196,6 +197,7 @@ st.table(
         ],
     }
 )
+st.dataframe(df_resumen, hide_index=True, use_container_width=True)
 if mora_monto == 0.0 and not mora_cfg.get("activa"):
     st.caption("_Intereses de mora: sin mora configurada._")
 elif mora_monto == 0.0 and saldo_u <= 0:

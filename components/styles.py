@@ -586,6 +586,25 @@ div[data-testid="stButton"] button:not(:disabled) {
 div[data-testid="stButton"] button:disabled {
     color: #CCCCCC !important;
 }
+
+/* ── FIX BOTONES ANCHO COMPLETO (use_container_width) ── */
+button[data-testid="baseButton-secondary"],
+button[data-testid="baseButton-primary"] {
+    color: #FFFFFF !important;
+    background-color: #1B4F8A !important;
+}
+
+button[data-testid="baseButton-secondary"]:hover,
+button[data-testid="baseButton-primary"]:hover {
+    color: #FFFFFF !important;
+    background-color: #163d6e !important;
+}
+
+button[data-testid="baseButton-secondary"]:disabled,
+button[data-testid="baseButton-primary"]:disabled {
+    color: #EEEEEE !important;
+    background-color: #8BA8C8 !important;
+}
 </style>
 """
 
