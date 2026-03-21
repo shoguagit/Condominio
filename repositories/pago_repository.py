@@ -77,7 +77,7 @@ class PagoRepository:
 
         unidades_rows = (
             self.client.table("unidades")
-            .select("id,estado_pago")
+            .select("*")
             .eq("condominio_id", condominio_id)
             .eq("activo", True)
             .execute()

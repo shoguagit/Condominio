@@ -101,10 +101,12 @@ class UnidadRepository:
 
     @safe_db_operation("unidad.get_suma_indivisos")
     def get_suma_indivisos(self, condominio_id: int, exclude_id: int | None = None) -> float:
-        """Suma total de indiviso_pct (%) del condominio; exclude_id omite una unidad (edición)."""
+        """Suma total de indiviso_pct (%) del condominio; exclude_id omite una unidad (edición).
+        Usa select('*') para no fallar si aún no se ejecutó fase1_migration (columna ausente en API).
+        """
         rows = (
             self.client.table(self.table)
-            .select("id,indiviso_pct")
+            .select("*")
             .eq("condominio_id", condominio_id)
             .execute()
         ).data
@@ -124,7 +126,7 @@ class UnidadRepository:
         """total unidades, al_dia, morosos, pct_asignado (suma indiviso %)."""
         rows = (
             self.client.table(self.table)
-            .select("estado_pago,indiviso_pct")
+            .select("*")
             .eq("condominio_id", condominio_id)
             .execute()
         ).data
