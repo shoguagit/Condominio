@@ -9,6 +9,7 @@ from repositories.condominio_repository import CondominioRepository
 from repositories.presupuesto_repository import PresupuestoRepository
 from repositories.proceso_repository import ProcesoMensualRepository
 from repositories.mora_repository import MoraRepository
+from repositories.cobro_extraordinario_repository import CobroExtraordinarioRepository
 from utils.auth import check_authentication, require_condominio
 from utils.error_handler import DatabaseError
 from utils.validators import validate_periodo, periodo_to_date_str
@@ -34,10 +35,11 @@ def get_repos():
         PresupuestoRepository(client),
         ProcesoMensualRepository(client),
         MoraRepository(client),
+        CobroExtraordinarioRepository(client),
     )
 
 
-repo_pago, repo_uni, repo_cond, repo_pres, repo_proc, repo_mora = get_repos()
+repo_pago, repo_uni, repo_cond, repo_pres, repo_proc, repo_mora, repo_cobro_ext = get_repos()
 
 st.markdown("## 💳 Pagos y cobros")
 
@@ -166,7 +168,19 @@ try:
 except DatabaseError:
     ya_pagado = 0.0
 
-total_a_pagar = round(saldo_u + cuota_m + mora_monto - ya_pagado, 2)
+periodo_ym = periodo_db[:7] if periodo_db else ""
+try:
+    cobros_detalle = repo_cobro_ext.listar_detalle_unidad(unidad_id, periodo_ym)
+except DatabaseError:
+    cobros_detalle = []
+try:
+    cobros_ext_total = repo_cobro_ext.total_por_unidad(unidad_id, periodo_ym)
+except DatabaseError:
+    cobros_ext_total = 0.0
+
+total_a_pagar = round(
+    saldo_u + cuota_m + cobros_ext_total + mora_monto - ya_pagado, 2
+)
 total_a_pagar_usd = _monto_usd_desde_bs(total_a_pagar, tasa)
 
 st.markdown("### Resumen de cuenta (unidad seleccionada)")
@@ -177,26 +191,28 @@ else:
     total_row_bs = f"Bs. {total_bs_fmt}"
 
 label_intereses = f"Intereses de mora ({pct_mora_disp:g}%)"
-df_resumen = pd.DataFrame(
-    {
-        "Concepto": [
-            "Saldo mes anterior",
-            "Cuota del mes",
-            label_intereses,
-            "TOTAL A PAGAR",
-            "Pagado hoy (formulario)",
-            "SALDO RESULTANTE",
-        ],
-        "Monto Bs.": [
-            f"Bs. {saldo_u:,.2f}",
-            f"Bs. {cuota_m:,.2f}",
-            f"Bs. {mora_monto:,.2f}",
-            total_row_bs,
-            "(al registrar)",
-            "(al registrar)",
-        ],
-    }
+conceptos_res = ["Saldo mes anterior", "Cuota del mes"]
+montos_res = [f"Bs. {saldo_u:,.2f}", f"Bs. {cuota_m:,.2f}"]
+for cd in cobros_detalle:
+    conceptos_res.append(f"Cobro ext.: {cd.get('concepto') or '—'}")
+    montos_res.append(f"Bs. {float(cd.get('monto') or 0):,.2f}")
+conceptos_res.extend(
+    [
+        label_intereses,
+        "TOTAL A PAGAR",
+        "Pagado hoy (formulario)",
+        "SALDO RESULTANTE",
+    ]
 )
+montos_res.extend(
+    [
+        f"Bs. {mora_monto:,.2f}",
+        total_row_bs,
+        "(al registrar)",
+        "(al registrar)",
+    ]
+)
+df_resumen = pd.DataFrame({"Concepto": conceptos_res, "Monto Bs.": montos_res})
 st.dataframe(df_resumen, hide_index=True, use_container_width=True)
 if mora_monto == 0.0 and not mora_cfg.get("activa"):
     st.caption("_Intereses de mora: sin mora configurada._")

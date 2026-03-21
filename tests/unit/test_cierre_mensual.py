@@ -27,6 +27,11 @@ def test_arrastre_saldo_anterior():
     assert saldo_nuevo_tras_cierre(252_000, 252_000, 252_000) == 252_000.0
 
 
+def test_saldo_con_cobros_extraordinarios():
+    assert saldo_nuevo_tras_cierre(100.0, 50.0, 0.0, 0.0, 25.0) == 175.0
+    assert saldo_nuevo_tras_cierre(100.0, 50.0, 10.0, 5.0, 20.0) == 165.0
+
+
 def test_eficiencia_cobro():
     assert eficiencia_cobro(1_000_000, 720_000) == 72.0
     assert eficiencia_cobro(0, 100) == 0.0

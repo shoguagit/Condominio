@@ -14,6 +14,7 @@ from repositories.unidad_repository import UnidadRepository
 from repositories.condominio_repository import CondominioRepository, obtener_dia_limite_safe
 from repositories.pago_repository import PagoRepository
 from repositories.mora_repository import MoraRepository
+from repositories.cobro_extraordinario_repository import CobroExtraordinarioRepository
 from utils.auth import check_authentication, require_condominio
 from utils.error_handler import DatabaseError
 from utils.validators import validate_periodo, periodo_to_date_str, date_periodo_to_mm_yyyy
@@ -48,10 +49,11 @@ def get_repos():
         CondominioRepository(client),
         PagoRepository(client),
         MoraRepository(client),
+        CobroExtraordinarioRepository(client),
     )
 
 
-repo_proc, repo_mov, repo_uni, repo_cond, repo_pago, repo_mora = get_repos()
+repo_proc, repo_mov, repo_uni, repo_cond, repo_pago, repo_mora, repo_cobro_ext = get_repos()
 
 st.markdown("## 🗓️ Proceso Mensual")
 
@@ -131,6 +133,12 @@ if st.session_state.pop("_flash_cierre_ok", False):
     st.success(f"✅ Mes cerrado. Nuevo período: **{nm}**")
 if st.session_state.pop("_flash_generar_cuotas", False):
     st.success("✅ Cuotas generadas correctamente.")
+if st.session_state.pop("_flash_cobro_ext_ok", False):
+    st.success("✅ Cobro extraordinario registrado y distribuido por indiviso.")
+if st.session_state.pop("_flash_cobro_ext_del", False):
+    st.success("✅ Cobro extraordinario anulado.")
+if st.session_state.pop("_flash_cobro_ext_err", False):
+    st.error(str(st.session_state.pop("_flash_cobro_ext_err_msg", "No se pudo completar la acción.")))
 
 st.markdown("### Presupuesto del mes")
 st.caption(
@@ -286,6 +294,102 @@ with st.expander("⚙️ Configuración de mora del período", expanded=False):
         f"**Día límite de pago configurado:** día {dia_limite} de cada mes"
     )
 
+# ── COBROS EXTRAORDINARIOS ─────────────────────────────────────────
+periodo_yyyy_mm = periodo_db[:7] if periodo_db else ""
+tasa_ui = float(st.session_state.get("tasa_cambio") or 0)
+if tasa_ui <= 0:
+    try:
+        _co = repo_cond.get_by_id(condominio_id)
+        tasa_ui = float(_co.get("tasa_cambio") or 0) if _co else 0.0
+    except DatabaseError:
+        tasa_ui = 0.0
+
+st.subheader("💰 Cobros extraordinarios del período")
+st.caption("Se distribuyen a todas las unidades activas según su indiviso (%).")
+
+with st.form("form_cobro_ext", clear_on_submit=True):
+    fc1, fc2 = st.columns([2, 1])
+    with fc1:
+        concepto_ce = st.text_input(
+            "Concepto *",
+            placeholder="Ej: Reparación ascensor, Pintura fachada",
+            disabled=cerrado,
+        )
+    with fc2:
+        monto_ce = st.number_input(
+            "Monto total (Bs.) *",
+            min_value=0.01,
+            step=1000.0,
+            format="%.2f",
+            disabled=cerrado,
+        )
+    submitted_ce = st.form_submit_button(
+        "➕ Agregar cobro extraordinario",
+        disabled=cerrado,
+    )
+    if submitted_ce and not cerrado:
+        try:
+            repo_cobro_ext.crear(
+                condominio_id,
+                periodo_yyyy_mm,
+                (concepto_ce or "").strip(),
+                float(monto_ce),
+            )
+            st.session_state["_flash_cobro_ext_ok"] = True
+            st.rerun()
+        except ValueError as e:
+            st.error(f"❌ {e}")
+        except DatabaseError as e:
+            st.error(f"❌ {e}")
+
+cobros_ext_list: list = []
+try:
+    cobros_ext_list = repo_cobro_ext.listar_por_periodo(condominio_id, periodo_yyyy_mm)
+except DatabaseError:
+    cobros_ext_list = []
+
+if cobros_ext_list:
+    st.markdown("**Cobros registrados este período:**")
+    for ce in cobros_ext_list:
+        r1, r2, r3, r4 = st.columns([2, 1, 1, 1])
+        r1.write(f"**{ce.get('concepto') or '—'}**")
+        r2.write(f"{float(ce.get('monto_total') or 0):,.2f} Bs.")
+        r3.write(f"{int(ce.get('n_unidades') or 0)} u.")
+        if r4.button(
+            "Eliminar",
+            key=f"btn_del_ce_{ce.get('id')}",
+            disabled=cerrado,
+        ):
+            try:
+                ok_del = repo_cobro_ext.eliminar(int(ce["id"]))
+                if ok_del:
+                    st.session_state["_flash_cobro_ext_del"] = True
+                else:
+                    st.session_state["_flash_cobro_ext_err"] = True
+                    st.session_state["_flash_cobro_ext_err_msg"] = (
+                        "No se puede eliminar (período cerrado o cobro inexistente)."
+                    )
+                st.rerun()
+            except DatabaseError as e:
+                st.session_state["_flash_cobro_ext_err"] = True
+                st.session_state["_flash_cobro_ext_err_msg"] = str(e)
+                st.rerun()
+    total_ext_bs = round(
+        sum(float(c.get("monto_total") or 0) for c in cobros_ext_list), 2
+    )
+    usd_ext = round(total_ext_bs / tasa_ui, 2) if tasa_ui and tasa_ui > 0 else 0.0
+    if tasa_ui and tasa_ui > 0:
+        st.info(
+            f"Total cobros extraordinarios del período: **Bs. {total_ext_bs:,.2f}** "
+            f"≈ **USD {usd_ext:,.2f}**"
+        )
+    else:
+        st.info(
+            f"Total cobros extraordinarios del período: **Bs. {total_ext_bs:,.2f}**"
+        )
+else:
+    st.caption("No hay cobros extraordinarios este período.")
+
 st.divider()
 
 st.markdown("### ⚙️ Generar cuotas")
@@ -359,6 +463,7 @@ if st.button("Generar cuotas", type="primary", use_container_width=True, disable
                     "mora": 0.0,
                     "mora_bs": 0.0,
                     "pct_mora": 0.0,
+                    "cobros_extraordinarios": 0.0,
                     "total_a_pagar_bs": total_a_pagar,
                     "estado": "pendiente",
                 }
@@ -383,6 +488,9 @@ if cuotas:
         pagos_por_unidad = {}
 
 if cuotas:
+    total_cobros_periodo_bs = round(
+        sum(float(c.get("monto_total") or 0) for c in cobros_ext_list), 2
+    )
     try:
         mora_cfg = repo_mora.obtener_config(condominio_id)
     except DatabaseError:
@@ -428,16 +536,23 @@ if cuotas:
         saldo_ant = float(c.get("saldo_anterior_bs") or 0)
         cuota_v = float(c.get("cuota_calculada_bs") or 0)
         pagado = round(float(pagos_por_unidad.get(uid, 0) or 0), 2)
+        try:
+            cobros_u = repo_cobro_ext.total_por_unidad(uid, periodo_yyyy_mm)
+        except DatabaseError:
+            cobros_u = 0.0
         mora_u = 0.0
         if mora_activa_logica and saldo_ant > 0:
             mora_u = MoraRepository.calcular_mora_unidad(saldo_ant, cuota_v, pct_cfg)
-        saldo_nuevo = saldo_nuevo_tras_cierre(saldo_ant, cuota_v, pagado, mora_u)
+        saldo_nuevo = saldo_nuevo_tras_cierre(
+            saldo_ant, cuota_v, pagado, mora_u, cobros_u
+        )
         rows_saldos.append(
             {
                 "Unidad": u.get("codigo") or u.get("numero") or "—",
                 "Propietario": (p.get("nombre") or "—"),
                 "Saldo ant.": saldo_ant,
                 "Cuota": cuota_v,
+                "Cobros ext.": cobros_u,
                 "Mora Bs.": mora_u,
                 "Pagado": pagado,
                 "Saldo nuevo": saldo_nuevo,
@@ -450,20 +565,23 @@ if cuotas:
         sum(float(c.get("cuota_calculada_bs") or 0) for c in cuotas), 2
     )
     total_mora_gen = round(sum(r["Mora Bs."] for r in rows_saldos), 2)
-    total_cuotas_mora = round(total_cuotas_emitidas + total_mora_gen, 2)
+    total_cuotas_mora_cobros = round(
+        total_cuotas_emitidas + total_mora_gen + total_cobros_periodo_bs, 2
+    )
     total_cobrado = round(total_pagos_mes, 2)
     total_pendiente = round(sum(r["Saldo nuevo"] for r in rows_saldos), 2)
     eff = (
-        round((total_cobrado / total_cuotas_mora) * 100, 2)
-        if total_cuotas_mora > 0
+        round((total_cobrado / total_cuotas_mora_cobros) * 100, 2)
+        if total_cuotas_mora_cobros > 0
         else 0.0
     )
 
     st.markdown("#### Resumen financiero (pre-cierre)")
-    r1a, r1b, r1c = st.columns(3)
+    r1a, r1b, r1c, r1d = st.columns(4)
     r1a.metric("Total mora generada (Bs.)", f"{total_mora_gen:,.2f}")
     r1b.metric("Total cuotas emitidas (Bs.)", f"{total_cuotas_emitidas:,.2f}")
-    r1c.metric("Total cuotas + mora (Bs.)", f"{total_cuotas_mora:,.2f}")
+    r1c.metric("Total cobros extraordinarios (Bs.)", f"{total_cobros_periodo_bs:,.2f}")
+    r1d.metric("Total cuotas + mora + cobros ext. (Bs.)", f"{total_cuotas_mora_cobros:,.2f}")
     r2a, r2b, r2c = st.columns(3)
     r2a.metric("Total cobrado (Bs.)", f"{total_cobrado:,.2f}")
     r2b.metric("Total pendiente (Bs.)", f"{total_pendiente:,.2f}")
@@ -527,8 +645,14 @@ if st.session_state.get("confirmar_cierre_mes"):
                     mora = MoraRepository.calcular_mora_unidad(
                         saldo_ant, cuota_v, pct_cierre
                     )
+                try:
+                    cobros_cierre = repo_cobro_ext.total_por_unidad(
+                        uid, periodo_yyyy_mm
+                    )
+                except DatabaseError:
+                    cobros_cierre = 0.0
                 saldo_nuevo = saldo_nuevo_tras_cierre(
-                    saldo_ant, cuota_v, pagos_mes, mora
+                    saldo_ant, cuota_v, pagos_mes, mora, cobros_cierre
                 )
                 repo_proc.update_cuota_row(
                     cid,
@@ -537,6 +661,7 @@ if st.session_state.get("confirmar_cierre_mes"):
                         "mora": mora,
                         "mora_bs": mora,
                         "pct_mora": pct_cierre if mora_activa_cierre else 0.0,
+                        "cobros_extraordinarios": cobros_cierre,
                         "total_a_pagar_bs": saldo_nuevo,
                         "estado": "cerrado",
                     },

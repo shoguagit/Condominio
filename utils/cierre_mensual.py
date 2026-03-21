@@ -6,11 +6,21 @@ from __future__ import annotations
 
 
 def saldo_nuevo_tras_cierre(
-    saldo_anterior: float, cuota: float, pagado: float, mora: float = 0.0
+    saldo_anterior: float,
+    cuota: float,
+    pagado: float,
+    mora: float = 0.0,
+    cobros_extraordinarios: float = 0.0,
 ) -> float:
-    """Saldo que arrastra la unidad tras cuota del mes, mora (opcional) y pagos del período."""
+    """
+    Saldo tras cuota, cobros extraordinarios (Fase 4-B), mora y pagos del período.
+    """
     return round(
-        float(saldo_anterior) + float(cuota) + float(mora) - float(pagado),
+        float(saldo_anterior)
+        + float(cuota)
+        + float(cobros_extraordinarios)
+        + float(mora)
+        - float(pagado),
         2,
     )
 
