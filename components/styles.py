@@ -276,26 +276,27 @@ TABLE_FORMS_EMPTY_CSS = """
     font-weight: 600 !important;
 }
 
-/* ── BOTONES: solución definitiva texto blanco ─────────────────────────────── */
-/* Cubrir absolutamente todos los botones primarios */
-button[kind="primary"],
-button[kind="primaryFormSubmit"],
-button[data-testid="baseButton-primary"],
-.stButton > button[kind="primary"],
-div[data-testid="stFormSubmitButton"] button {
-    background-color: #1B4F72 !important;
+/* ── BOTONES ── */
+div.stButton > button {
+    background-color: #1B4F8A;
     color: #FFFFFF !important;
-    border: none !important;
-    font-weight: 600 !important;
+    font-weight: 600;
+    border: none;
+    border-radius: 6px;
+    padding: 0.5rem 1.2rem;
+    transition: background-color 0.2s ease;
 }
 
-button[kind="primary"]:hover,
-button[kind="primaryFormSubmit"]:hover,
-button[data-testid="baseButton-primary"]:hover,
-.stButton > button[kind="primary"]:hover,
-div[data-testid="stFormSubmitButton"] button:hover {
-    background-color: #2E86C1 !important;
+div.stButton > button:hover {
+    background-color: #163d6e;
     color: #FFFFFF !important;
+}
+
+div.stButton > button:disabled {
+    background-color: #8BA8C8;
+    color: #FFFFFF !important;
+    cursor: not-allowed;
+    opacity: 0.7;
 }
 
 /* ── FORMULARIOS: secciones con subtítulo (Fase 2) ─────────────────────────── */
