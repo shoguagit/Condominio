@@ -56,7 +56,21 @@ except DatabaseError as e:
     st.error(str(e))
     st.stop()
 
-tasa = float(condominio.get("tasa_cambio") or 0) if condominio else 0.0
+def _tasa_efectiva() -> float:
+    """Prioriza tasa en sesión (sidebar/global); si no hay, usa la del condominio."""
+    ts = float(st.session_state.get("tasa_cambio") or 0)
+    if ts > 0:
+        return ts
+    return float(condominio.get("tasa_cambio") or 0) if condominio else 0.0
+
+
+tasa = _tasa_efectiva()
+
+
+def _monto_usd_desde_bs(monto_bs_val: float, tasa_val: float) -> float:
+    if tasa_val and tasa_val > 0:
+        return round(float(monto_bs_val) / float(tasa_val), 2)
+    return 0.0
 
 pres_row = fetch_presupuesto_si_existe(
     get_supabase_client(), condominio_id, periodo_db
@@ -125,8 +139,15 @@ except DatabaseError:
     ya_pagado = 0.0
 
 total_a_pagar = round(saldo_u + cuota_m + mora - ya_pagado, 2)
+total_a_pagar_usd = _monto_usd_desde_bs(total_a_pagar, tasa)
 
 st.markdown("### Resumen de cuenta (unidad seleccionada)")
+total_bs_fmt = f"{total_a_pagar:,.2f}"
+if tasa and tasa > 0:
+    total_row_bs = f"{total_bs_fmt}  ≈ USD {total_a_pagar_usd:,.2f}"
+else:
+    total_row_bs = total_bs_fmt
+
 st.table(
     {
         "Concepto": [
@@ -141,26 +162,37 @@ st.table(
             f"{saldo_u:,.2f}",
             f"{cuota_m:,.2f}",
             f"{mora:,.2f}",
-            f"{total_a_pagar:,.2f}",
+            total_row_bs,
             "(al registrar)",
             "(al registrar)",
         ],
     }
 )
+if tasa and tasa > 0:
+    st.caption(
+        f"**TOTAL A PAGAR:** Bs. {total_a_pagar:,.2f} ≈ USD {total_a_pagar_usd:,.2f} "
+        f"(tasa: Bs. {tasa:,.2f})"
+    )
+
+# Fuera del form: el monto actualiza el equivalente USD en cada interacción (dentro del form no rerun).
+monto_bs = st.number_input(
+    "Monto recibido (Bs.) *",
+    min_value=0.0,
+    value=max(0.0, float(total_a_pagar)),
+    step=0.01,
+    format="%.2f",
+    help="Precarga el total adeudado; ajuste si es pago parcial.",
+    key="pago_monto_bs_input",
+)
+monto_usd_calc = _monto_usd_desde_bs(monto_bs, tasa)
+if tasa and tasa > 0:
+    st.caption(f"≈ USD {monto_usd_calc:,.2f} (tasa: Bs. {tasa:,.2f})")
+else:
+    st.caption(
+        "Sin tasa de cambio: defina **tasa_cambio** en la sesión (sidebar) o en datos del condominio."
+    )
 
 with st.form("form_pago"):
-    monto_bs = st.number_input(
-        "Monto recibido (Bs.) *",
-        min_value=0.0,
-        value=max(0.0, float(total_a_pagar)),
-        step=0.01,
-        format="%.2f",
-        help="Precarga el total adeudado; ajuste si es pago parcial.",
-    )
-    if tasa and tasa > 0:
-        st.caption(f"Monto USD (automático): **{monto_bs / tasa:,.4f}** (tasa {tasa})")
-    else:
-        st.caption("Defina tasa de cambio en el condominio para ver monto USD.")
     fecha_pago = st.date_input("Fecha de pago *")
     metodo = st.radio(
         "Método de pago *",
@@ -191,7 +223,7 @@ if guardar:
     else:
         saldo_res = round(total_a_pagar - float(monto_bs), 2)
         pid = u_sel.get("propietario_id")
-        monto_usd = round(float(monto_bs) / float(tasa), 4) if tasa and tasa > 0 else 0.0
+        monto_usd = _monto_usd_desde_bs(float(monto_bs), tasa)
         data = {
             "condominio_id": condominio_id,
             "unidad_id": unidad_id,
@@ -233,14 +265,19 @@ else:
     for h in hist:
         uu = h.get("unidades") or {}
         cod = (uu.get("codigo") or uu.get("numero") or "—")
+        mbs = float(h.get("monto_bs") or 0)
+        musd = float(h.get("monto_usd") or 0)
+        tc_row = float(h.get("tasa_cambio") or 0)
+        if musd == 0 and tc_row > 0 and mbs > 0:
+            musd = round(mbs / tc_row, 2)
         rows.append(
             {
                 "fecha_pago": h.get("fecha_pago"),
                 "unidad": cod,
                 "metodo": h.get("metodo"),
                 "referencia": h.get("referencia") or "—",
-                "monto_bs": h.get("monto_bs"),
-                "monto_usd": h.get("monto_usd"),
+                "monto_bs": f"{mbs:,.2f}",
+                "monto_usd": f"{musd:,.2f}",
                 "estado": h.get("estado"),
             }
         )
