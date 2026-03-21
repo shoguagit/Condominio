@@ -112,13 +112,18 @@ class UnidadRepository:
 
     @safe_db_operation("unidad.update")
     def update(self, unidad_id: int, data: dict) -> dict:
-        codigo = (data.get("codigo") or "").strip()
-        if not codigo:
-            raise DatabaseError("El código de la unidad es obligatorio.")
-        if data.get("saldo") is None:
-            data["saldo"] = 0.00
-        # propietario_id y alicuota_id pueden ser null (sin asignar)
+        """
+        Actualización parcial permitida (p. ej. solo saldo/estado_pago desde Pagos o Proceso mensual).
+        El código solo se valida si viene en el payload (formulario de edición de unidad).
+        """
         payload = dict(data)
+        if "codigo" in payload:
+            codigo = (payload.get("codigo") or "").strip()
+            if not codigo:
+                raise DatabaseError("El código de la unidad es obligatorio.")
+        if "saldo" in payload and payload.get("saldo") is None:
+            payload["saldo"] = 0.00
+        # propietario_id y alicuota_id pueden ser null (sin asignar)
         response = (
             self.client.table(self.table)
             .update(payload)
