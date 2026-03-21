@@ -284,13 +284,13 @@ with col_main:
                     "email":              (email or "").strip() or None,
                     "moneda_principal":   moneda_code,
                     "activo":             activo,
+                    # Incluido en el mismo update/create (evita AttributeError si el
+                    # despliegue no tiene actualizar_dia_limite en el repositorio).
+                    "dia_limite_pago":    int(dia_limite_pago),
                 }
                 if is_edit and current_rec:
                     try:
                         repo_condo.update(current_rec["id"], payload)
-                        repo_condo.actualizar_dia_limite(
-                            int(current_rec["id"]), int(dia_limite_pago)
-                        )
                         st.success("✅ Condominio actualizado correctamente.")
                         st.session_state.condo_modo    = None
                         st.session_state.condo_records = None
@@ -299,10 +299,7 @@ with col_main:
                         st.error(f"❌ {e}")
                 else:
                     try:
-                        created = repo_condo.create(payload)
-                        repo_condo.actualizar_dia_limite(
-                            int(created["id"]), int(dia_limite_pago)
-                        )
+                        repo_condo.create(payload)
                         st.success("✅ Condominio creado exitosamente.")
                         st.session_state.condo_modo    = None
                         st.session_state.condo_records = None
