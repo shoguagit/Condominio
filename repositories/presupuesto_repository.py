@@ -7,6 +7,17 @@ from utils.error_handler import DatabaseError
 logger = logging.getLogger(__name__)
 
 
+def _error_text(exc: Exception) -> str:
+    """Texto unificado para detectar códigos PostgREST (p. ej. PGRST205 tabla inexistente)."""
+    parts: list[str] = [str(exc).lower()]
+    if hasattr(exc, "message"):
+        parts.append(str(getattr(exc, "message", "")).lower())
+    if hasattr(exc, "args") and exc.args:
+        for a in exc.args:
+            parts.append(str(a).lower())
+    return " ".join(parts)
+
+
 def fetch_presupuesto_si_existe(
     client: Client, condominio_id: int, periodo: str
 ) -> dict | None:
@@ -78,16 +89,21 @@ def upsert_presupuesto_seguro(
     except DatabaseError:
         raise
     except Exception as e:
-        err = str(e).lower()
+        err = _error_text(e)
         logger.warning("upsert_presupuesto_seguro falló: %s", e)
         if (
             "does not exist" in err
             or "42p01" in err
+            or "pgrst205" in err
+            or "could not find the table" in err
+            or "schema cache" in err
             or ("relation" in err and "presupuestos" in err)
         ):
             raise DatabaseError(
-                "No existe la tabla presupuestos. Ejecute scripts/fase1_migration.sql "
-                "en el SQL Editor de Supabase y vuelva a intentar."
+                "No existe la tabla presupuestos en Supabase (error PGRST205: tabla ausente en el API). "
+                "En supabase.com → su proyecto → menú SQL: pegue y ejecute todo el archivo "
+                "scripts/fase1_migration.sql del repositorio. Tras ejecutarlo, espere unos segundos "
+                "y vuelva a guardar el presupuesto."
             ) from e
         if "permission denied" in err or "rls" in err or "policy" in err:
             raise DatabaseError(
