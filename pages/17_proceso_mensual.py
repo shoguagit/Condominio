@@ -58,6 +58,9 @@ except DatabaseError as e:
     st.stop()
 
 st.markdown("### Presupuesto del mes")
+# Tras st.rerun() el st.success del click desaparece; mostramos mensaje en la siguiente ejecución.
+if st.session_state.pop("_flash_presupuesto_ok", False):
+    st.success("✅ Presupuesto guardado en la base de datos.")
 st.caption(
     "Para guardar el presupuesto en base de datos, ejecute `scripts/fase1_migration.sql` "
     "(tabla `presupuestos`). Si no, el monto solo queda en sesión hasta recargar."
@@ -91,12 +94,23 @@ with col_pb:
                 None,
             )
             st.session_state.presupuesto_mes = float(monto_pres)
-            st.success("Presupuesto guardado.")
+            st.session_state["_flash_presupuesto_ok"] = True
+            st.toast("Presupuesto guardado", icon="✅")
             st.rerun()
         except DatabaseError as e:
             st.error(str(e))
+        except Exception as e:
+            st.error(f"Error inesperado al guardar: {e}")
 
 st.session_state.presupuesto_mes = float(monto_pres)
+
+if pres_existente:
+    st.caption(
+        f"💾 Presupuesto en base de datos para **{periodo_db}**: "
+        f"**{float(pres_existente['monto_bs']):,.2f} Bs.**"
+    )
+else:
+    st.caption("_Todavía no hay presupuesto guardado en BD para este período._")
 
 st.markdown(f"**Estado:** {proceso.get('estado', '—')}")
 if proceso.get("estado") == "cerrado":
