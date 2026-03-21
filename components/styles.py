@@ -276,27 +276,29 @@ TABLE_FORMS_EMPTY_CSS = """
     font-weight: 600 !important;
 }
 
-/* ── BOTONES ── */
-div.stButton > button {
-    background-color: #1B4F8A;
+/* ── BOTONES — alta especificidad para sobreescribir Streamlit ── */
+div[data-testid="stButton"] > button,
+div[data-testid="stButton"] > button:focus,
+div[data-testid="stButton"] > button:active,
+section[data-testid="stSidebar"] div[data-testid="stButton"] > button {
+    background-color: #1B4F8A !important;
     color: #FFFFFF !important;
-    font-weight: 600;
-    border: none;
-    border-radius: 6px;
-    padding: 0.5rem 1.2rem;
-    transition: background-color 0.2s ease;
+    font-weight: 600 !important;
+    border: none !important;
+    border-radius: 6px !important;
+    padding: 0.5rem 1.2rem !important;
 }
 
-div.stButton > button:hover {
-    background-color: #163d6e;
+div[data-testid="stButton"] > button:hover {
+    background-color: #163d6e !important;
     color: #FFFFFF !important;
 }
 
-div.stButton > button:disabled {
-    background-color: #8BA8C8;
+div[data-testid="stButton"] > button:disabled,
+div[data-testid="stButton"] > button[disabled] {
+    background-color: #8BA8C8 !important;
     color: #FFFFFF !important;
-    cursor: not-allowed;
-    opacity: 0.7;
+    opacity: 0.7 !important;
 }
 
 /* ── FORMULARIOS: secciones con subtítulo (Fase 2) ─────────────────────────── */
