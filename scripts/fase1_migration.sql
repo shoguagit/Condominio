@@ -5,7 +5,7 @@
 
 -- Unidades: indiviso %, estado de pago, tipo (PDF)
 ALTER TABLE unidades
-ADD COLUMN IF NOT EXISTS indiviso_pct NUMERIC(6,4) DEFAULT 0.0000;
+ADD COLUMN IF NOT EXISTS indiviso_pct NUMERIC(8,4) DEFAULT 0.0000;
 
 ALTER TABLE unidades
 ADD COLUMN IF NOT EXISTS estado_pago VARCHAR(20) DEFAULT 'al_dia';

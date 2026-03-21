@@ -52,6 +52,16 @@ def safe_db_operation(operation_name: str):
                     )
                 elif "not null" in error_msg.lower():
                     raise DatabaseError("Faltan campos obligatorios.")
+                elif (
+                    "22003" in error_msg
+                    or ("numeric" in error_msg.lower() and "overflow" in error_msg.lower())
+                    or "numeric field overflow" in error_msg.lower()
+                ):
+                    raise DatabaseError(
+                        "Un valor numérico supera lo permitido en la base de datos. "
+                        "Si editó el indiviso a 100%, ejecute en Supabase el script "
+                        "scripts/fase2_migration.sql (ALTER indiviso_pct a NUMERIC(8,4))."
+                    )
                 elif "network" in error_msg.lower() or "connection" in error_msg.lower():
                     raise DatabaseError("Error de conexión. Verifique su internet.")
                 else:

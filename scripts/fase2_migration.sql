@@ -3,6 +3,10 @@
 -- Ejecutar en Supabase SQL Editor después de backup.
 -- =============================================================================
 
+-- Indiviso: NUMERIC(6,4) solo admite hasta 99.9999; hace falta 100.0000 como máximo.
+ALTER TABLE unidades
+ALTER COLUMN indiviso_pct TYPE NUMERIC(8,4);
+
 -- Presupuestos: fecha de vencimiento opcional
 ALTER TABLE presupuestos
 ADD COLUMN IF NOT EXISTS fecha_vencimiento DATE;
