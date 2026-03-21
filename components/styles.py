@@ -571,6 +571,21 @@ div[data-testid="stButton"] > button[disabled] {
     margin-left: auto;
     margin-right: auto;
 }
+
+/* ── FIX BOTONES ANCHO COMPLETO ── */
+button[kind="primary"],
+button[kind="secondary"],
+.stButton button,
+[data-testid="stButton"] button,
+[data-baseweb="button"],
+div[data-testid="stButton"] button:not(:disabled) {
+    color: #FFFFFF !important;
+}
+
+/* Botón deshabilitado: texto gris claro legible */
+div[data-testid="stButton"] button:disabled {
+    color: #CCCCCC !important;
+}
 </style>
 """
 
