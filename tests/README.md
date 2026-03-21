@@ -9,10 +9,14 @@ El comando `pytest` del PATH puede apuntar a **otro** Python que el de tu `.venv
 **Recomendado:**
 
 ```bash
-# Activar venv y usar SIEMPRE el python del venv para pytest
+# Activar venv, instalar dependencias (incluye pytest y reportlab)
 source .venv/bin/activate
+python -m pip install -r requirements.txt
 python -m pytest tests/unit/test_reportes.py -v
 ```
+
+Si el venv tiene `reportlab` pero **no** `pytest`, verá `No module named pytest`.
+Instale con: `python -m pip install pytest` (o `pip install -r requirements.txt` tras el último pull).
 
 O sin activar:
 
