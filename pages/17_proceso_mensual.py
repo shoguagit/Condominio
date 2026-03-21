@@ -230,6 +230,65 @@ if not ok_s:
 else:
     st.success("✅ Suma de indivisos = 100,00% (± tolerancia).")
 
+# ── CONFIGURACIÓN DE MORA ──────────────────────────────────────────
+try:
+    config_mora = repo_mora.obtener_config(condominio_id)
+except DatabaseError:
+    config_mora = {"activa": False, "pct_mora": 0.0}
+try:
+    dia_limite = repo_cond.obtener_dia_limite(condominio_id)
+except DatabaseError:
+    dia_limite = 15
+
+with st.expander("⚙️ Configuración de mora del período", expanded=False):
+    col1, col2 = st.columns([1, 1])
+    with col1:
+        mora_activa = st.toggle(
+            "Activar mora este mes",
+            value=bool(config_mora.get("activa", False)),
+            key="toggle_mora",
+            disabled=cerrado,
+        )
+    with col2:
+        pct_mora = st.number_input(
+            "% mora mensual",
+            min_value=0.0,
+            max_value=100.0,
+            step=0.1,
+            value=float(config_mora.get("pct_mora", 0.0)),
+            key="input_pct_mora",
+            disabled=cerrado,
+        )
+
+    if st.button(
+        "💾 Guardar configuración de mora",
+        key="btn_guardar_mora",
+        disabled=cerrado,
+    ):
+        try:
+            repo_mora.actualizar_config(
+                condominio_id,
+                float(pct_mora),
+                bool(mora_activa),
+            )
+            st.success(
+                f"Mora {'activada' if mora_activa else 'desactivada'} — "
+                f"{pct_mora}% mensual guardado."
+            )
+            st.rerun()
+        except DatabaseError as e:
+            st.error(f"❌ {e}")
+        except ValueError as e:
+            st.error(f"❌ {e}")
+
+    st.info(
+        "📌 La mora aplica **solo** si el propietario tiene deuda "
+        "anterior (saldo anterior > 0). Si tiene crédito a favor, "
+        "mora = Bs. 0 aunque tenga cuota pendiente.\n\n"
+        "**Base de cálculo:** saldo anterior + cuota del mes\n\n"
+        f"**Día límite de pago configurado:** día {dia_limite} de cada mes"
+    )
+
 st.divider()
 
 st.markdown("### ⚙️ Generar cuotas")
@@ -362,45 +421,6 @@ if cuotas:
             }
         )
     st.dataframe(rows_cuotas, use_container_width=True, hide_index=True)
-
-    with st.expander("⚙️ Configuración de mora del período"):
-        st.info(
-            """
-**Mora** se aplica solo si el propietario tiene **deuda anterior** (saldo anterior > 0).
-Si tiene **crédito a favor**, mora = **Bs. 0** aunque tenga cuota pendiente.
-
-**Base de cálculo:** saldo anterior + cuota del mes × % mora.
-
-Solo aplica si la mora está activa, el % > 0 y la **fecha de hoy** es **posterior** al día límite de pago del período.
-            """.strip()
-        )
-        with st.form("form_cfg_mora_proc"):
-            act_m = st.toggle(
-                "Activar mora este mes",
-                value=bool(mora_cfg.get("activa")),
-                disabled=cerrado,
-            )
-            pct_in = st.number_input(
-                "% mora mensual",
-                min_value=0.0,
-                max_value=100.0,
-                step=0.1,
-                value=float(mora_cfg.get("pct_mora") or 0),
-                disabled=cerrado,
-            )
-            save_m = st.form_submit_button(
-                "Guardar configuración de mora",
-                disabled=cerrado,
-            )
-        if save_m and not cerrado:
-            try:
-                repo_mora.actualizar_config(condominio_id, float(pct_in), bool(act_m))
-                st.success("✅ Configuración de mora guardada.")
-                st.rerun()
-            except DatabaseError as e:
-                st.error(f"❌ {e}")
-            except ValueError as e:
-                st.error(f"❌ {e}")
 
     st.markdown("#### Saldos por unidad (vista pre-cierre)")
     rows_saldos = []
