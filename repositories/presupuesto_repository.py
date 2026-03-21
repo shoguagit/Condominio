@@ -30,6 +30,77 @@ def fetch_presupuesto_si_existe(
         return None
 
 
+def upsert_presupuesto_seguro(
+    client: Client,
+    condominio_id: int,
+    periodo: str,
+    monto_bs: float,
+    descripcion: str | None = None,
+) -> dict:
+    """
+    Insert/update presupuesto sin instancia de repositorio (Streamlit Cloud / caché).
+    Usa .select('*') tras write para que PostgREST devuelva la fila.
+    """
+    payload: dict = {
+        "condominio_id": condominio_id,
+        "periodo": periodo,
+        "monto_bs": float(monto_bs),
+        "estado": "activo",
+    }
+    if descripcion is not None:
+        payload["descripcion"] = descripcion
+
+    try:
+        existing = fetch_presupuesto_si_existe(client, condominio_id, periodo)
+        if existing:
+            resp = (
+                client.table("presupuestos")
+                .update(payload)
+                .eq("id", existing["id"])
+                .select("*")
+                .execute()
+            )
+        else:
+            resp = (
+                client.table("presupuestos")
+                .insert(payload)
+                .select("*")
+                .execute()
+            )
+
+        data = getattr(resp, "data", None) or []
+        if isinstance(data, list) and len(data) > 0:
+            return data[0]
+
+        again = fetch_presupuesto_si_existe(client, condominio_id, periodo)
+        if again:
+            return again
+
+        raise RuntimeError(
+            "La operación no devolvió filas; revise RLS o permisos de la tabla presupuestos."
+        )
+    except DatabaseError:
+        raise
+    except Exception as e:
+        err = str(e).lower()
+        logger.warning("upsert_presupuesto_seguro falló: %s", e)
+        if (
+            "does not exist" in err
+            or "42p01" in err
+            or ("relation" in err and "presupuestos" in err)
+        ):
+            raise DatabaseError(
+                "No existe la tabla presupuestos. Ejecute scripts/fase1_migration.sql "
+                "en el SQL Editor de Supabase y vuelva a intentar."
+            ) from e
+        if "permission denied" in err or "rls" in err or "policy" in err:
+            raise DatabaseError(
+                "Sin permiso para escribir en presupuestos. Compruebe la clave "
+                "(service_role) y las políticas RLS en Supabase."
+            ) from e
+        raise DatabaseError(f"No se pudo guardar el presupuesto: {e}") from e
+
+
 class PresupuestoRepository:
     def __init__(self, client: Client):
         self.client = client
@@ -40,59 +111,6 @@ class PresupuestoRepository:
         return fetch_presupuesto_si_existe(self.client, condominio_id, periodo)
 
     def upsert(self, condominio_id: int, periodo: str, monto_bs: float, descripcion: str | None = None) -> dict:
-        """
-        Sin @safe_db_operation: errores claros y sin asumir que resp.data tiene filas
-        (PostgREST a veces devuelve lista vacía con Prefer: return=minimal).
-        """
-        payload: dict = {
-            "condominio_id": condominio_id,
-            "periodo": periodo,
-            "monto_bs": float(monto_bs),
-            "estado": "activo",
-        }
-        if descripcion is not None:
-            payload["descripcion"] = descripcion
-
-        try:
-            existing = self.get_by_periodo(condominio_id, periodo)
-            if existing:
-                resp = (
-                    self.client.table(self.table)
-                    .update(payload)
-                    .eq("id", existing["id"])
-                    .execute()
-                )
-            else:
-                resp = self.client.table(self.table).insert(payload).execute()
-
-            data = getattr(resp, "data", None) or []
-            if isinstance(data, list) and len(data) > 0:
-                return data[0]
-
-            again = fetch_presupuesto_si_existe(self.client, condominio_id, periodo)
-            if again:
-                return again
-
-            raise RuntimeError(
-                "La operación no devolvió filas; revise RLS o permisos de la tabla presupuestos."
-            )
-        except DatabaseError:
-            raise
-        except Exception as e:
-            err = str(e).lower()
-            logger.warning("presupuesto.upsert falló: %s", e)
-            if (
-                "does not exist" in err
-                or "42p01" in err
-                or ("relation" in err and "presupuestos" in err)
-            ):
-                raise DatabaseError(
-                    "No existe la tabla presupuestos. Ejecute scripts/fase1_migration.sql "
-                    "en el SQL Editor de Supabase y vuelva a intentar."
-                ) from e
-            if "permission denied" in err or "rls" in err or "policy" in err:
-                raise DatabaseError(
-                    "Sin permiso para escribir en presupuestos. Compruebe la clave "
-                    "(service_role) y las políticas RLS en Supabase."
-                ) from e
-            raise DatabaseError(f"No se pudo guardar el presupuesto: {e}") from e
+        return upsert_presupuesto_seguro(
+            self.client, condominio_id, periodo, monto_bs, descripcion
+        )

@@ -1,7 +1,10 @@
 import streamlit as st
 
 from config.supabase_client import get_supabase_client
-from repositories.presupuesto_repository import fetch_presupuesto_si_existe
+from repositories.presupuesto_repository import (
+    fetch_presupuesto_si_existe,
+    upsert_presupuesto_seguro,
+)
 from repositories.unidad_repository import suma_indivisos_si_disponible
 from repositories.movimiento_repository import MovimientoRepository
 from repositories.proceso_repository import ProcesoMensualRepository
@@ -80,7 +83,13 @@ with col_pr:
 with col_pb:
     if st.button("Guardar presupuesto", use_container_width=True, disabled=(proceso.get("estado") == "cerrado")):
         try:
-            repo_pres.upsert(condominio_id, periodo_db, monto_pres, None)
+            upsert_presupuesto_seguro(
+                get_supabase_client(),
+                condominio_id,
+                periodo_db,
+                float(monto_pres),
+                None,
+            )
             st.session_state.presupuesto_mes = float(monto_pres)
             st.success("Presupuesto guardado.")
             st.rerun()
