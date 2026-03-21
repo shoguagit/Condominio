@@ -39,7 +39,9 @@ def upsert_presupuesto_seguro(
 ) -> dict:
     """
     Insert/update presupuesto sin instancia de repositorio (Streamlit Cloud / caché).
-    Usa .select('*') tras write para que PostgREST devuelva la fila.
+
+    postgrest-py 2.x no permite .select() tras .insert()/.update(); se ejecuta el write
+    y si resp.data viene vacío se re-lee con fetch_presupuesto_si_existe.
     """
     payload: dict = {
         "condominio_id": condominio_id,
@@ -57,16 +59,10 @@ def upsert_presupuesto_seguro(
                 client.table("presupuestos")
                 .update(payload)
                 .eq("id", existing["id"])
-                .select("*")
                 .execute()
             )
         else:
-            resp = (
-                client.table("presupuestos")
-                .insert(payload)
-                .select("*")
-                .execute()
-            )
+            resp = client.table("presupuestos").insert(payload).execute()
 
         data = getattr(resp, "data", None) or []
         if isinstance(data, list) and len(data) > 0:
