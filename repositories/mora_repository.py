@@ -94,11 +94,24 @@ class MoraRepository:
         base_mora = float(saldo_anterior) + float(cuota_mes)
         return round(base_mora * (float(pct_mora) / 100.0), 2)
 
-    @safe_db_operation("mora.mora_aplica_hoy")
     def mora_aplica_hoy(self, condominio_id: int, anio: int, mes: int) -> bool:
         """
         True si hoy es estrictamente posterior al día límite del período (año/mes).
+
+        No usa @safe_db_operation: ante BD incompleta (sin columna dia_limite_pago),
+        fechas inválidas u otros errores, retorna False y no bloquea Pagos / Proceso mensual.
         """
-        dia_limite = obtener_dia_limite_safe(self._condo_repo, condominio_id)
-        fecha_limite = date(int(anio), int(mes), int(dia_limite))
-        return date.today() > fecha_limite
+        try:
+            dia_limite = obtener_dia_limite_safe(self._condo_repo, condominio_id)
+            if not isinstance(dia_limite, int) or not (1 <= dia_limite <= 28):
+                dia_limite = 15
+            y = int(anio)
+            m = int(mes)
+            if not (1 <= m <= 12):
+                return False
+            fecha_limite = date(y, m, dia_limite)
+            return date.today() > fecha_limite
+        except (ValueError, TypeError, OSError):
+            return False
+        except Exception:
+            return False
