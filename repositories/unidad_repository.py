@@ -1,7 +1,63 @@
+import logging
+
 from supabase import Client
 
 from utils.error_handler import safe_db_operation, DatabaseError
 from utils.indiviso_cuota import cuota_bs_desde_presupuesto
+
+logger = logging.getLogger(__name__)
+
+_TAB_UNI = "unidades"
+
+
+def suma_indivisos_si_disponible(
+    client: Client, condominio_id: int, exclude_id: int | None = None
+) -> float:
+    """
+    Suma indiviso_pct sin decorador: no tumba la app si PostgREST/RLS/red fallan
+    (p. ej. Streamlit Cloud).
+    """
+    try:
+        rows = (
+            client.table(_TAB_UNI)
+            .select("*")
+            .eq("condominio_id", condominio_id)
+            .execute()
+        ).data
+        total = 0.0
+        for r in rows or []:
+            if exclude_id is not None and r.get("id") == exclude_id:
+                continue
+            total += float(r.get("indiviso_pct") or 0)
+        return round(total, 4)
+    except Exception as e:
+        logger.warning("suma_indivisos_si_disponible: %s", e)
+        return 0.0
+
+
+def indicadores_unidades_si_disponible(
+    client: Client, condominio_id: int, solo_activos: bool = False
+) -> dict:
+    """Métricas de unidades; dict vacío en error."""
+    try:
+        q = client.table(_TAB_UNI).select("*").eq("condominio_id", condominio_id)
+        if solo_activos:
+            q = q.eq("activo", True)
+        rows = q.execute().data
+        rows = rows or []
+        total = len(rows)
+        al_dia = sum(1 for r in rows if (r.get("estado_pago") or "al_dia") == "al_dia")
+        morosos = sum(1 for r in rows if (r.get("estado_pago") or "") == "moroso")
+        pct_asignado = round(sum(float(r.get("indiviso_pct") or 0) for r in rows), 4)
+        return {
+            "total": total,
+            "al_dia": al_dia,
+            "morosos": morosos,
+            "pct_asignado": pct_asignado,
+        }
+    except Exception as e:
+        logger.warning("indicadores_unidades_si_disponible: %s", e)
+        return {"total": 0, "al_dia": 0, "morosos": 0, "pct_asignado": 0.0}
 
 
 class UnidadRepository:
@@ -99,48 +155,17 @@ class UnidadRepository:
         )
         return response.data[0]
 
-    @safe_db_operation("unidad.get_suma_indivisos")
     def get_suma_indivisos(self, condominio_id: int, exclude_id: int | None = None) -> float:
-        """Suma total de indiviso_pct (%) del condominio; exclude_id omite una unidad (edición).
-        Usa select('*') para no fallar si aún no se ejecutó fase1_migration (columna ausente en API).
-        """
-        rows = (
-            self.client.table(self.table)
-            .select("*")
-            .eq("condominio_id", condominio_id)
-            .execute()
-        ).data
-        total = 0.0
-        for r in rows or []:
-            if exclude_id is not None and r.get("id") == exclude_id:
-                continue
-            total += float(r.get("indiviso_pct") or 0)
-        return round(total, 4)
+        """Delega en suma_indivisos_si_disponible (sin @safe_db_operation)."""
+        return suma_indivisos_si_disponible(self.client, condominio_id, exclude_id)
 
     def get_disponible_indiviso(self, condominio_id: int, exclude_id: int | None = None) -> float:
         """100% − suma actual de indivisos (sin la unidad excluida)."""
         return round(100.0 - self.get_suma_indivisos(condominio_id, exclude_id), 4)
 
-    @safe_db_operation("unidad.get_indicadores")
     def get_indicadores(self, condominio_id: int) -> dict:
-        """total unidades, al_dia, morosos, pct_asignado (suma indiviso %)."""
-        rows = (
-            self.client.table(self.table)
-            .select("*")
-            .eq("condominio_id", condominio_id)
-            .execute()
-        ).data
-        rows = rows or []
-        total = len(rows)
-        al_dia = sum(1 for r in rows if (r.get("estado_pago") or "al_dia") == "al_dia")
-        morosos = sum(1 for r in rows if (r.get("estado_pago") or "") == "moroso")
-        pct_asignado = round(sum(float(r.get("indiviso_pct") or 0) for r in rows), 4)
-        return {
-            "total": total,
-            "al_dia": al_dia,
-            "morosos": morosos,
-            "pct_asignado": pct_asignado,
-        }
+        """Delega en indicadores_unidades_si_disponible (sin @safe_db_operation)."""
+        return indicadores_unidades_si_disponible(self.client, condominio_id)
 
     def get_with_cuota(self, condominio_id: int, presupuesto_mes: float) -> list[dict]:
         """Unidades con _cuota_bs calculada (presupuesto × indiviso/100)."""

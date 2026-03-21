@@ -2,6 +2,7 @@ import streamlit as st
 
 from config.supabase_client import get_supabase_client
 from repositories.presupuesto_repository import fetch_presupuesto_si_existe
+from repositories.unidad_repository import suma_indivisos_si_disponible
 from repositories.movimiento_repository import MovimientoRepository
 from repositories.proceso_repository import ProcesoMensualRepository
 from repositories.unidad_repository import UnidadRepository
@@ -109,7 +110,9 @@ col2.metric("Fondo reserva 10% (Bs)", f"{fondo_reserva_bs:,.2f}")
 col3.metric("Total facturable (Bs)", f"{total_facturable_bs:,.2f}")
 
 st.markdown("### 📊 Validación de indivisos (%)")
-suma_ind = repo_uni.get_suma_indivisos(condominio_id, exclude_id=None)
+suma_ind = suma_indivisos_si_disponible(
+    get_supabase_client(), condominio_id, exclude_id=None
+)
 ok_s, msg_s = valida_suma_exacta_100_pct(suma_ind)
 if not ok_s:
     st.warning(
@@ -131,7 +134,9 @@ if st.button("Procesar mes", type="primary", use_container_width=True, disabled=
             st.error("❌ Defina y guarde un presupuesto del mes mayor a cero.")
             st.stop()
 
-        suma_i = repo_uni.get_suma_indivisos(condominio_id, exclude_id=None)
+        suma_i = suma_indivisos_si_disponible(
+            get_supabase_client(), condominio_id, exclude_id=None
+        )
         ok_i, msg_i = valida_suma_exacta_100_pct(suma_i)
         if not ok_i:
             st.error(f"❌ {msg_i}")

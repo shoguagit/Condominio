@@ -1,5 +1,6 @@
 from supabase import Client
 
+from repositories.unidad_repository import indicadores_unidades_si_disponible
 from utils.error_handler import safe_db_operation, DatabaseError
 
 
@@ -75,14 +76,9 @@ class PagoRepository:
         total_cobrado = float(sum(float(r.get("monto_bs") or 0) for r in rows))
         n_pagos = len(rows)
 
-        unidades_rows = (
-            self.client.table("unidades")
-            .select("*")
-            .eq("condominio_id", condominio_id)
-            .eq("activo", True)
-            .execute()
-        ).data
-        al_dia = sum(1 for u in unidades_rows if (u.get("estado_pago") or "") == "al_dia")
+        al_dia = indicadores_unidades_si_disponible(
+            self.client, condominio_id, solo_activos=True
+        )["al_dia"]
 
         esperado = float(presupuesto_mes) * (float(suma_indiviso_pct) / 100.0)
         pendiente = max(0.0, round(esperado - total_cobrado, 2))
