@@ -480,7 +480,8 @@ def render_sidebar() -> None:
 
         # ── General ────────────────────────────────────────────────────────────
         _group("General")
-        st.page_link("app.py",                        label="🏠  Inicio")
+        st.page_link("pages/00_dashboard.py",         label="📊  Dashboard")
+        st.page_link("app.py",                        label="🏠  Inicio (legacy)")
         st.page_link("pages/01_condominios.py",       label="🏢  Condominios")
         st.page_link("pages/12_usuarios.py",          label="🔐  Usuarios")
 
