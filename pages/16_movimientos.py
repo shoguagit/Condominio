@@ -1,4 +1,3 @@
-import io
 from collections import Counter
 
 import pandas as pd
@@ -13,6 +12,7 @@ from repositories.conciliacion_repository import ConciliacionRepository
 from components.header import render_header
 from components.breadcrumb import render_breadcrumb
 from utils.auth import check_authentication, require_condominio
+from utils.bank_parser import MovimientoParsed, parsear_bytes
 from utils.conciliacion import clasificar_alerta
 from utils.error_handler import DatabaseError
 from utils.validators import validate_periodo, periodo_to_date_str
@@ -269,72 +269,205 @@ with tab_carga:
                         st.error(f"❌ {e}")
 
     with tab_upload:
-        st.markdown("### 📥 Cargar Excel")
+        st.markdown("### 📥 Cargar Excel (parser por banco)")
         st.caption(
-            "Carga un Excel y lo inserta como movimientos del período seleccionado."
+            "Detectamos automáticamente BDV, Banesco, Bancamiga o Mercantil. "
+            "Previsualiza y confirma antes de guardar en la base de datos."
         )
 
-        file = st.file_uploader("Archivo Excel", type=["xlsx"])
-        if file is not None:
-            content = file.getvalue()
-            df = pd.read_excel(io.BytesIO(content))
-            st.dataframe(df.head(20), use_container_width=True, hide_index=True)
+        if "upload_step" not in st.session_state:
+            st.session_state.upload_step = 1
+        if "parse_result" not in st.session_state:
+            st.session_state.parse_result = None
+        if "archivo_nombre" not in st.session_state:
+            st.session_state.archivo_nombre = ""
+        if "bank_uploader_nonce" not in st.session_state:
+            st.session_state.bank_uploader_nonce = 0
 
-            if st.button("Procesar e insertar", type="primary", use_container_width=True):
-                try:
-                    inserted = 0
-                    for _, row in df.iterrows():
-                        payload = {
-                            "condominio_id": condominio_id,
-                            "periodo": periodo_db,
-                            "fecha": pd.to_datetime(row.get("fecha")).date()
-                            if row.get("fecha") is not None
-                            else None,
-                            "descripcion": str(row.get("descripcion") or "").strip()
-                            or None,
-                            "referencia": str(row.get("referencia") or "").strip()
-                            or None,
-                            "tipo": str(row.get("tipo") or "").strip().lower()
-                            or None,
-                            "monto_bs": float(row.get("monto_bs") or 0),
-                            "monto_usd": float(row.get("monto_usd") or 0),
-                            "tasa_cambio": float(row.get("tasa_cambio") or 0),
-                            "estado": "pendiente",
-                            "fuente": "excel",
-                        }
-                        if not payload["fecha"]:
-                            continue
-                        created = repo_mov.create(payload)
-                        inserted += 1
-                        if (payload.get("tipo") or "").lower() == "ingreso":
-                            fd = payload["fecha"]
-                            try:
-                                sug = repo_conciliacion.sugerir_vinculacion(
-                                    int(created["id"]),
-                                    condominio_id,
-                                    periodo_db,
-                                )
-                                ms = (
-                                    float(sug["pago"]["monto_bs"])
-                                    if sug and sug.get("pago")
-                                    else 0.0
-                                )
-                                tipo_a = clasificar_alerta(
-                                    float(created.get("monto_bs") or 0),
-                                    ms,
-                                    fd,
-                                    periodo_ym,
-                                )
-                                repo_mov.update(
-                                    int(created["id"]),
-                                    {"tipo_alerta": tipo_a},
-                                )
-                            except DatabaseError:
-                                pass
-                    st.success(f"✅ Insertados {inserted} movimientos.")
+        def _importar_movimientos_parsed(movs: list[MovimientoParsed]) -> int:
+            inserted = 0
+            for m in movs:
+                payload = {
+                    "condominio_id": condominio_id,
+                    "periodo": periodo_db,
+                    "fecha": m.fecha,
+                    "descripcion": (m.concepto or "").strip() or None,
+                    "referencia": (m.referencia or "").strip() or None,
+                    "tipo": "ingreso" if m.es_ingreso else "egreso",
+                    "monto_bs": float(m.monto),
+                    "monto_usd": 0.0,
+                    "tasa_cambio": 0.0,
+                    "estado": "pendiente",
+                    "fuente": "excel",
+                }
+                created = repo_mov.create(payload)
+                inserted += 1
+                if m.es_ingreso:
+                    try:
+                        sug = repo_conciliacion.sugerir_vinculacion(
+                            int(created["id"]),
+                            condominio_id,
+                            periodo_db,
+                        )
+                        ms = (
+                            float(sug["pago"]["monto_bs"])
+                            if sug and sug.get("pago")
+                            else 0.0
+                        )
+                        tipo_a = clasificar_alerta(
+                            float(created.get("monto_bs") or 0),
+                            ms,
+                            m.fecha,
+                            periodo_ym,
+                        )
+                        repo_mov.update(
+                            int(created["id"]),
+                            {"tipo_alerta": tipo_a},
+                        )
+                    except DatabaseError:
+                        pass
+            return inserted
+
+        step = st.session_state.upload_step
+
+        if step == 1:
+            st.markdown("##### Paso 1/3 — Subir archivo")
+            file = st.file_uploader(
+                "Archivo Excel del banco",
+                type=["xlsx"],
+                key=f"bank_xlsx_{st.session_state.bank_uploader_nonce}",
+            )
+            if file is not None:
+                if st.session_state.get("_bank_file_stem") != file.name:
+                    st.session_state._bank_file_stem = file.name
+                    st.session_state.archivo_nombre = file.name
+                    st.session_state.parse_result = None
+                    st.session_state.upload_step = 1
+
+                st.caption(f"Archivo: **{file.name}**")
+                if st.button(
+                    "Analizar y previsualizar",
+                    type="primary",
+                    use_container_width=True,
+                ):
+                    try:
+                        st.session_state.parse_result = parsear_bytes(file.getvalue())
+                        st.session_state.archivo_nombre = file.name
+                        st.session_state.upload_step = 2
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"❌ Error inesperado al analizar: {e}")
+
+        elif step == 2:
+            st.markdown("##### Paso 2/3 — Previsualización")
+            pr = st.session_state.parse_result
+            nombre = st.session_state.archivo_nombre or "—"
+            st.caption(f"Archivo: **{nombre}**")
+
+            if pr is None:
+                st.warning("No hay resultado de análisis. Vuelve al paso 1.")
+                if st.button("← Volver al paso 1"):
+                    st.session_state.upload_step = 1
                     st.rerun()
-                except Exception as e:
-                    st.error(f"❌ Error procesando archivo: {e}")
+            else:
+                if pr.banco:
+                    st.success(f"🏦 Banco detectado: **{pr.banco}**")
+                else:
+                    st.error("No se detectó banco.")
+
+                c1, c2, c3 = st.columns(3)
+                with c1:
+                    st.metric("Total ingresos Bs.", f"{pr.total_ingresos:,.2f}")
+                with c2:
+                    st.metric("Total egresos Bs.", f"{pr.total_egresos:,.2f}")
+                with c3:
+                    st.metric("Movimientos", len(pr.movimientos))
+
+                if pr.advertencias:
+                    with st.expander("⚠️ Advertencias", expanded=False):
+                        for a in pr.advertencias:
+                            st.caption(a)
+
+                if pr.errores:
+                    with st.expander("❌ Errores por fila", expanded=bool(pr.errores)):
+                        for e in pr.errores[:200]:
+                            st.text(e)
+                        if len(pr.errores) > 200:
+                            st.caption(f"… y {len(pr.errores) - 200} más.")
+
+                if pr.movimientos:
+                    preview_rows = [
+                        {
+                            "fecha": m.fecha,
+                            "referencia": m.referencia,
+                            "concepto": m.concepto[:80] + "…"
+                            if len(m.concepto) > 80
+                            else m.concepto,
+                            "monto_bs": m.monto,
+                            "tipo": "ingreso" if m.es_ingreso else "egreso",
+                        }
+                        for m in pr.movimientos
+                    ]
+                    st.dataframe(
+                        preview_rows,
+                        use_container_width=True,
+                        hide_index=True,
+                        column_config={
+                            "fecha": st.column_config.DateColumn("Fecha"),
+                            "referencia": st.column_config.TextColumn("Referencia"),
+                            "concepto": st.column_config.TextColumn("Concepto"),
+                            "monto_bs": st.column_config.NumberColumn(
+                                "Monto Bs.", format="%.2f"
+                            ),
+                            "tipo": st.column_config.TextColumn("Tipo"),
+                        },
+                    )
+                else:
+                    st.info("No hay movimientos válidos para importar.")
+
+                b1, b2 = st.columns(2)
+                with b1:
+                    if st.button("← Cambiar archivo", use_container_width=True):
+                        st.session_state.upload_step = 1
+                        st.session_state.parse_result = None
+                        st.session_state.archivo_nombre = ""
+                        st.session_state.bank_uploader_nonce = (
+                            int(st.session_state.bank_uploader_nonce) + 1
+                        )
+                        st.rerun()
+                with b2:
+                    disabled = not pr.movimientos
+                    if st.button(
+                        "Importar a la base de datos",
+                        type="primary",
+                        use_container_width=True,
+                        disabled=disabled,
+                    ):
+                        try:
+                            n = _importar_movimientos_parsed(pr.movimientos)
+                            st.session_state._import_ok_msg = (
+                                f"✅ Insertados **{n}** movimientos desde {pr.banco}."
+                            )
+                            st.session_state.upload_step = 3
+                            st.rerun()
+                        except DatabaseError as err:
+                            st.error(f"❌ {err}")
+                        except Exception as err:
+                            st.error(f"❌ Error al importar: {err}")
+
+        elif step == 3:
+            st.markdown("##### Paso 3/3 — Importación completada")
+            msg = st.session_state.pop("_import_ok_msg", "✅ Proceso finalizado.")
+            st.success(msg)
+            if st.button("Cargar otro archivo", type="primary", use_container_width=True):
+                st.session_state.upload_step = 1
+                st.session_state.parse_result = None
+                st.session_state.archivo_nombre = ""
+                st.session_state._bank_file_stem = None
+                st.session_state.bank_uploader_nonce = (
+                    int(st.session_state.bank_uploader_nonce) + 1
+                )
+                st.rerun()
 
 
 def _fmt_sugerencia(sug: dict | None) -> tuple[str, str]:
