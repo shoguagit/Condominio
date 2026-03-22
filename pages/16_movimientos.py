@@ -1,4 +1,5 @@
 from collections import Counter
+import re
 
 import pandas as pd
 import streamlit as st
@@ -17,6 +18,35 @@ from utils.conciliacion import clasificar_alerta
 from utils.error_handler import DatabaseError
 from utils.supabase_compat import json_safe_date, json_safe_periodo
 from utils.validators import validate_periodo, periodo_to_date_str
+
+
+def convertir_periodo(periodo_mmyyyy: str) -> str:
+    """'01/2026' → '2026-01' (YYYY-MM). Vacío si formato inválido."""
+    try:
+        s = str(periodo_mmyyyy or "").strip()
+        partes = s.split("/")
+        if len(partes) != 2:
+            return ""
+        mm, yyyy = partes[0].strip().zfill(2), partes[1].strip()
+        if not mm.isdigit() or not yyyy.isdigit() or len(yyyy) != 4:
+            return ""
+        im = int(mm)
+        if im < 1 or im > 12:
+            return ""
+        return f"{yyyy}-{mm}"
+    except Exception:
+        return ""
+
+
+def mes_proceso_a_mmyyyy_default(raw: str) -> str:
+    """Valor inicial del selector: mes_proceso suele ser YYYY-MM-01 → MM/YYYY."""
+    s = str(raw or "").strip()
+    if len(s) >= 10 and re.match(r"^\d{4}-\d{2}-\d{2}", s):
+        y, m, _ = s[:10].split("-")
+        return f"{m}/{y}"
+    if re.match(r"^\d{1,2}/\d{4}$", s):
+        return s
+    return ""
 
 
 st.set_page_config(page_title="Movimientos Bancarios", page_icon="🏦", layout="wide")
@@ -601,190 +631,216 @@ ALERTA_ETIQUETAS = {
 with tab_conciliacion:
     usuario = (st.session_state.get("user_email") or "").strip() or "sistema"
 
-    st.subheader("Resumen del período")
-    try:
-        estado = repo_conciliacion.obtener_estado_periodo(condominio_id, periodo_db)
-    except DatabaseError as e:
-        st.error(f"❌ {e}")
-        st.stop()
-
-    c1, c2, c3, c4 = st.columns(4)
-    with c1:
-        st.metric("Movimientos banco", estado["total_movimientos_banco"])
-    with c2:
-        st.metric("Conciliados ✅", estado["total_conciliados"])
-    with c3:
-        st.metric("Sin conciliar ⚠️", estado["total_sin_conciliar"])
-    with c4:
-        d = float(estado["diferencia"])
-        color = "#1e8449" if d == 0 else "#c0392b"
-        st.markdown(
-            f'<p style="font-size:0.85rem;color:#666">Diferencia Bs.</p>'
-            f'<p style="font-size:1.6rem;font-weight:600;color:{color}">'
-            f"Bs. {d:,.2f}</p>",
-            unsafe_allow_html=True,
+    col_p1, col_p2 = st.columns([1, 3])
+    with col_p1:
+        _default_conc = mes_proceso_a_mmyyyy_default(
+            str(st.session_state.get("mes_proceso") or "")
+        )
+        periodo_conc = st.text_input(
+            "Período a conciliar (MM/YYYY)",
+            value=_default_conc,
+            key="periodo_conciliacion",
+            help="Puede conciliar cualquier período, no solo el mes activo de carga.",
+        )
+    with col_p2:
+        st.caption(
+            "Este período solo aplica a **Conciliación**. "
+            "La carga y el listado siguen usando el período superior (YYYY-MM-01)."
         )
 
-    tot = max(estado["total_movimientos_banco"], 1)
-    prog = estado["total_conciliados"] / tot
-    st.progress(prog, text=f"Progreso: {estado['total_conciliados']} / {tot}")
+    periodo_ym_conc = convertir_periodo(periodo_conc)
+    if not periodo_ym_conc:
+        st.error("❌ Período inválido. Use formato **MM/YYYY** (ej: 01/2026).")
+    else:
+        periodo_db_conc = f"{periodo_ym_conc}-01"
 
-    st.divider()
-    st.subheader("Alertas activas")
-    alertas = estado.get("alertas") or []
-    if alertas:
-        cnt = Counter(
-            (a.get("tipo_alerta") or "sin_clasificar") for a in alertas
-        )
-        lines = []
-        for tipo, n in sorted(cnt.items(), key=lambda x: -x[1]):
-            if tipo == "sin_clasificar" or not tipo:
-                continue
-            icon, lab = ALERTA_ETIQUETAS.get(
-                tipo, ("⚪", tipo.replace("_", " "))
+        st.subheader("Resumen del período")
+        estado = None
+        try:
+            estado = repo_conciliacion.obtener_estado_periodo(
+                condominio_id, periodo_db_conc
             )
-            lines.append(f"- {icon} **{lab}**: {n} movimiento(s)")
-        if lines:
-            st.warning("Resumen de alertas en movimientos del período:\n\n" + "\n".join(lines))
-        else:
-            st.success("✅ Sin alertas pendientes")
-    else:
-        st.success("✅ Sin alertas pendientes")
+        except DatabaseError as e:
+            st.error(f"❌ {e}")
 
-    st.divider()
-    st.subheader("Movimientos por conciliar")
+        if estado is not None:
+            c1, c2, c3, c4 = st.columns(4)
+            with c1:
+                st.metric("Movimientos banco", estado["total_movimientos_banco"])
+            with c2:
+                st.metric("Conciliados ✅", estado["total_conciliados"])
+            with c3:
+                st.metric("Sin conciliar ⚠️", estado["total_sin_conciliar"])
+            with c4:
+                d = float(estado["diferencia"])
+                color = "#1e8449" if d == 0 else "#c0392b"
+                st.markdown(
+                    f'<p style="font-size:0.85rem;color:#666">Diferencia Bs.</p>'
+                    f'<p style="font-size:1.6rem;font-weight:600;color:{color}">'
+                    f"Bs. {d:,.2f}</p>",
+                    unsafe_allow_html=True,
+                )
 
-    try:
-        ing_all = repo_mov.get_by_tipo(condominio_id, periodo_db, "ingreso")
-    except DatabaseError as e:
-        st.error(f"❌ {e}")
-        ing_all = []
+            tot = max(estado["total_movimientos_banco"], 1)
+            prog = estado["total_conciliados"] / tot
+            st.progress(prog, text=f"Progreso: {estado['total_conciliados']} / {tot}")
 
-    pendientes = [r for r in ing_all if not r.get("conciliado")]
-    if not pendientes:
-        st.info("No hay ingresos pendientes de conciliar.")
-    else:
-        for r in pendientes:
-            mid = int(r["id"])
+            st.divider()
+            st.subheader("Alertas activas")
+            alertas = estado.get("alertas") or []
+            if alertas:
+                cnt = Counter(
+                    (a.get("tipo_alerta") or "sin_clasificar") for a in alertas
+                )
+                lines = []
+                for tipo, n in sorted(cnt.items(), key=lambda x: -x[1]):
+                    if tipo == "sin_clasificar" or not tipo:
+                        continue
+                    icon, lab = ALERTA_ETIQUETAS.get(
+                        tipo, ("⚪", tipo.replace("_", " "))
+                    )
+                    lines.append(f"- {icon} **{lab}**: {n} movimiento(s)")
+                if lines:
+                    st.warning("Resumen de alertas en movimientos del período:\n\n" + "\n".join(lines))
+                else:
+                    st.success("✅ Sin alertas pendientes")
+            else:
+                st.success("✅ Sin alertas pendientes")
+
+            st.divider()
+            st.subheader("Movimientos por conciliar")
+
             try:
-                sug = repo_conciliacion.sugerir_vinculacion(
-                    mid, condominio_id, periodo_db
-                )
-            except DatabaseError:
-                sug = None
-
-            html_sug, _ = _fmt_sugerencia(sug)
-            ta = r.get("tipo_alerta") or "—"
-            fecha = r.get("fecha")
-            ref = r.get("referencia") or "—"
-            monto = float(r.get("monto_bs") or 0)
-
-            st.markdown("---")
-            c_a, c_b, c_c, c_d = st.columns([1.2, 1, 1.2, 2.2])
-            with c_a:
-                st.caption("Fecha")
-                st.write(str(fecha)[:10])
-            with c_b:
-                st.caption("Referencia")
-                st.write(ref)
-            with c_c:
-                st.caption("Monto Bs.")
-                st.write(f"Bs. {monto:,.2f}")
-            with c_d:
-                st.caption("Alerta / sugerencia")
-                st.markdown(f"**{ta}**  \n{html_sug}", unsafe_allow_html=True)
-
-            bc1, bc2 = st.columns(2)
-            pago_id = None
-            if sug and sug.get("pago"):
-                pago_id = int(sug["pago"]["id"])
-            with bc1:
-                if st.button(
-                    "✔ Confirmar",
-                    key=f"conf_mov_{mid}",
-                    disabled=(pago_id is None),
-                ):
-                    try:
-                        repo_conciliacion.confirmar_vinculacion(
-                            mid, pago_id, usuario
-                        )
-                        st.success("✅ Vinculación confirmada.")
-                        st.rerun()
-                    except DatabaseError as err:
-                        st.error(f"❌ {err}")
-            with bc2:
-                if st.button("✘ Marcar sin pago", key=f"rej_mov_{mid}"):
-                    try:
-                        repo_conciliacion.rechazar_vinculacion(
-                            mid, "sin_pago_sistema", usuario
-                        )
-                        st.success("Movimiento marcado como sin pago en sistema.")
-                        st.rerun()
-                    except DatabaseError as err:
-                        st.error(f"❌ {err}")
-
-    st.divider()
-    st.subheader("⚠️ Pagos registrados sin movimiento bancario")
-    try:
-        sin_mov = repo_conciliacion.detectar_pagos_sin_movimiento(
-            condominio_id, periodo_db
-        )
-    except DatabaseError as e:
-        st.error(f"❌ {e}")
-        sin_mov = []
-
-    if not sin_mov:
-        st.success("✅ Todos los pagos tienen movimiento bancario")
-    else:
-        rows_sm = []
-        for p in sin_mov:
-            u = p.get("unidades") or {}
-            unidad = u.get("codigo") or u.get("numero") or "—"
-            rows_sm.append(
-                {
-                    "fecha": p.get("fecha_pago"),
-                    "unidad": unidad,
-                    "monto_bs": float(p.get("monto_bs") or 0),
-                    "metodo": p.get("metodo") or "—",
-                    "referencia": p.get("referencia") or "—",
-                }
-            )
-        st.dataframe(
-            rows_sm,
-            use_container_width=True,
-            hide_index=True,
-            column_config={
-                "fecha": st.column_config.DateColumn("Fecha"),
-                "unidad": st.column_config.TextColumn("Unidad"),
-                "monto_bs": st.column_config.NumberColumn(
-                    "Monto Bs.", format="%.2f"
-                ),
-                "metodo": st.column_config.TextColumn("Método"),
-                "referencia": st.column_config.TextColumn("Referencia"),
-            },
-        )
-
-    st.divider()
-    st.subheader("Cierre de conciliación")
-    dif = float(estado["diferencia"])
-    if dif == 0:
-        st.success("✅ Saldo cuadrado — listo para cerrar conciliación")
-        if st.button("🔒 Cerrar conciliación del período", type="primary"):
-            try:
-                rec = repo_conciliacion.cerrar_conciliacion(
-                    condominio_id, periodo_db, usuario
-                )
-                st.success(
-                    f"✅ Conciliación cerrada. Registro id={rec.get('id')} | "
-                    f"Período {rec.get('periodo')} | "
-                    f"Mov. banco {rec.get('movimientos_banco')} | "
-                    f"Conciliados {rec.get('movimientos_conciliados')} | "
-                    f"Pagos sin mov. {rec.get('pagos_sin_movimiento')}"
-                )
-                st.rerun()
+                ing_all = repo_mov.get_by_tipo(condominio_id, periodo_db_conc, "ingreso")
             except DatabaseError as e:
                 st.error(f"❌ {e}")
-    else:
-        st.error(
-            f"❌ Diferencia de Bs. {dif:,.2f} — no se puede cerrar hasta cuadrar"
-        )
+                ing_all = []
+
+            pendientes = [r for r in ing_all if not r.get("conciliado")]
+            if not pendientes:
+                st.info("No hay ingresos pendientes de conciliar.")
+            else:
+                for r in pendientes:
+                    mid = int(r["id"])
+                    try:
+                        sug = repo_conciliacion.sugerir_vinculacion(
+                            mid, condominio_id, periodo_db_conc
+                        )
+                    except DatabaseError:
+                        sug = None
+
+                    html_sug, _ = _fmt_sugerencia(sug)
+                    ta = r.get("tipo_alerta") or "—"
+                    fecha = r.get("fecha")
+                    ref = r.get("referencia") or "—"
+                    monto = float(r.get("monto_bs") or 0)
+
+                    st.markdown("---")
+                    c_a, c_b, c_c, c_d = st.columns([1.2, 1, 1.2, 2.2])
+                    with c_a:
+                        st.caption("Fecha")
+                        st.write(str(fecha)[:10])
+                    with c_b:
+                        st.caption("Referencia")
+                        st.write(ref)
+                    with c_c:
+                        st.caption("Monto Bs.")
+                        st.write(f"Bs. {monto:,.2f}")
+                    with c_d:
+                        st.caption("Alerta / sugerencia")
+                        st.markdown(f"**{ta}**  \n{html_sug}", unsafe_allow_html=True)
+
+                    bc1, bc2 = st.columns(2)
+                    pago_id = None
+                    if sug and sug.get("pago"):
+                        pago_id = int(sug["pago"]["id"])
+                    with bc1:
+                        if st.button(
+                            "✔ Confirmar",
+                            key=f"conf_mov_{mid}",
+                            disabled=(pago_id is None),
+                        ):
+                            try:
+                                repo_conciliacion.confirmar_vinculacion(
+                                    mid, pago_id, usuario
+                                )
+                                st.success("✅ Vinculación confirmada.")
+                                st.rerun()
+                            except DatabaseError as err:
+                                st.error(f"❌ {err}")
+                    with bc2:
+                        if st.button("✘ Marcar sin pago", key=f"rej_mov_{mid}"):
+                            try:
+                                repo_conciliacion.rechazar_vinculacion(
+                                    mid, "sin_pago_sistema", usuario
+                                )
+                                st.success("Movimiento marcado como sin pago en sistema.")
+                                st.rerun()
+                            except DatabaseError as err:
+                                st.error(f"❌ {err}")
+
+            st.divider()
+            st.subheader("⚠️ Pagos registrados sin movimiento bancario")
+            try:
+                sin_mov = repo_conciliacion.detectar_pagos_sin_movimiento(
+                    condominio_id, periodo_db_conc
+                )
+            except DatabaseError as e:
+                st.error(f"❌ {e}")
+                sin_mov = []
+
+            if not sin_mov:
+                st.success("✅ Todos los pagos tienen movimiento bancario")
+            else:
+                rows_sm = []
+                for p in sin_mov:
+                    u = p.get("unidades") or {}
+                    unidad = u.get("codigo") or u.get("numero") or "—"
+                    rows_sm.append(
+                        {
+                            "fecha": p.get("fecha_pago"),
+                            "unidad": unidad,
+                            "monto_bs": float(p.get("monto_bs") or 0),
+                            "metodo": p.get("metodo") or "—",
+                            "referencia": p.get("referencia") or "—",
+                        }
+                    )
+                st.dataframe(
+                    rows_sm,
+                    use_container_width=True,
+                    hide_index=True,
+                    column_config={
+                        "fecha": st.column_config.DateColumn("Fecha"),
+                        "unidad": st.column_config.TextColumn("Unidad"),
+                        "monto_bs": st.column_config.NumberColumn(
+                            "Monto Bs.", format="%.2f"
+                        ),
+                        "metodo": st.column_config.TextColumn("Método"),
+                        "referencia": st.column_config.TextColumn("Referencia"),
+                    },
+                )
+
+            st.divider()
+            st.subheader("Cierre de conciliación")
+            dif = float(estado["diferencia"])
+            if dif == 0:
+                st.success("✅ Saldo cuadrado — listo para cerrar conciliación")
+                if st.button("🔒 Cerrar conciliación del período", type="primary"):
+                    try:
+                        rec = repo_conciliacion.cerrar_conciliacion(
+                            condominio_id, periodo_db_conc, usuario
+                        )
+                        st.success(
+                            f"✅ Conciliación cerrada. Registro id={rec.get('id')} | "
+                            f"Período {rec.get('periodo')} | "
+                            f"Mov. banco {rec.get('movimientos_banco')} | "
+                            f"Conciliados {rec.get('movimientos_conciliados')} | "
+                            f"Pagos sin mov. {rec.get('pagos_sin_movimiento')}"
+                        )
+                        st.rerun()
+                    except DatabaseError as e:
+                        st.error(f"❌ {e}")
+            else:
+                st.error(
+                    f"❌ Diferencia de Bs. {dif:,.2f} — no se puede cerrar hasta cuadrar"
+                )
