@@ -290,7 +290,8 @@ with tab_carga:
                 payload = {
                     "condominio_id": condominio_id,
                     "periodo": periodo_db,
-                    "fecha": m.fecha,
+                    # Supabase/JSON no serializa datetime.date; ISO es válido para columna DATE
+                    "fecha": m.fecha.isoformat(),
                     "descripcion": (m.concepto or "").strip() or None,
                     "referencia": (m.referencia or "").strip() or None,
                     "tipo": "ingreso" if m.es_ingreso else "egreso",
