@@ -103,11 +103,10 @@ def generar_plantilla_mora(
     tasa = float(tasa_cambio or 0)
 
     if tasa > 0:
-        usd_txt = f"{sb / tasa:,.2f}"
-        tasa_txt = "a tasa BCV"
+        usd_equiv = sb / tasa
+        saldo_linea_usd = f"(≈ USD {usd_equiv:,.2f} a tasa BCV)"
     else:
-        usd_txt = "N/D"
-        tasa_txt = "(tasa BCV no disponible)"
+        saldo_linea_usd = "(≈ USD N/D — tasa BCV no disponible)"
 
     asunto = f"Aviso de deuda pendiente — {uc} — {cn}"
 
@@ -118,7 +117,8 @@ Le informamos que su unidad {uc} presenta una deuda pendiente con el condominio 
 Detalle:
 - Período: {per}
 - Meses de atraso: {ma}
-- Saldo adeudado: Bs. {sb:,.2f} (≈ USD {usd_txt} {tasa_txt})
+- Saldo adeudado: Bs. {sb:,.2f}
+  {saldo_linea_usd}
 
 Le solicitamos regularizar su situación a la brevedad.
 Para consultas, comuníquese con la administración.
@@ -129,7 +129,7 @@ Atentamente,
     return {"asunto": asunto, "cuerpo": cuerpo}
 
 
-def _linea_saldo_usd(saldo_bs: float, tasa_cambio: float) -> str:
+def texto_linea_saldo_usd(saldo_bs: float, tasa_cambio: float) -> str:
     tasa = float(tasa_cambio or 0)
     sb = float(saldo_bs or 0)
     if tasa > 0:

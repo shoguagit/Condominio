@@ -40,7 +40,7 @@ class NotificacionRepository:
             "asunto": (asunto or "")[:255] or None,
             "cuerpo": cuerpo,
             "enviado": bool(enviado),
-            "error_mensaje": (error_msg or None),
+            "error_mensaje": error if error else None,
             "tipo": tipo,
         }
         if enviado:

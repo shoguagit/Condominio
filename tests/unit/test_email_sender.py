@@ -1,4 +1,4 @@
-"""Tests de utilidades de correo (sin envío SMTP real)."""
+"""Tests unitarios para utils/email_sender.py (sin envío SMTP real)."""
 
 from utils.email_sender import EmailConfig, generar_plantilla_mora, validar_config_smtp
 
@@ -22,13 +22,7 @@ def test_validar_smtp_password_corta():
 
 def test_generar_plantilla_mora_contiene_datos():
     resultado = generar_plantilla_mora(
-        "Condominio Test",
-        "Juan Pérez",
-        "Apto 1A",
-        "03/2026",
-        252000.0,
-        2,
-        455.25,
+        "Condominio Test", "Juan Pérez", "Apto 1A", "03/2026", 252000.0, 2, 455.25
     )
     assert "Juan Pérez" in resultado["cuerpo"]
     assert "Apto 1A" in resultado["cuerpo"]
