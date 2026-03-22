@@ -153,10 +153,19 @@ def detectar_banco(df_raw: pd.DataFrame) -> str:
 
     # Banesco / BDV: encabezado en fila 0
     row0 = df_raw.iloc[0].tolist()
-    vals = [_norm_cell(x) for x in row0]
-    vals_norm = [_norm_col_name(x) for x in row0]
-
-    if "debe" in vals_norm and "haber" in vals_norm:
+    cols_banesco = {
+        "Fecha",
+        "Referencia",
+        "Descripción",
+        "Monto",
+        "Balance",
+    }
+    fila0_set = {
+        str(v).strip()
+        for v in row0
+        if v is not None and not (isinstance(v, float) and pd.isna(v)) and str(v).strip()
+    }
+    if cols_banesco.issubset(fila0_set):
         return "Banesco"
 
     for v in row0:
@@ -328,17 +337,15 @@ def parsear_banesco(df_raw: pd.DataFrame) -> ParseResult:
     c_fecha = _resolver_columna(df, "fecha")
     c_ref = _resolver_columna(df, "referencia")
     c_desc = _resolver_columna(df, "descripción", "descripcion")
-    c_debe = _resolver_columna(df, "debe")
-    c_haber = _resolver_columna(df, "haber")
     c_monto = _resolver_columna(df, "monto")
 
-    if not all([c_fecha, c_ref, c_debe, c_haber]):
+    if not all([c_fecha, c_ref, c_monto]):
         return ParseResult(
             "Banesco",
             [],
             0,
             0,
-            ["Faltan columnas esperadas (Fecha, Referencia, Debe, Haber)."],
+            ["Faltan columnas esperadas (Fecha, Referencia, Monto)."],
             [],
         )
 
@@ -356,43 +363,29 @@ def parsear_banesco(df_raw: pd.DataFrame) -> ParseResult:
                 continue
             ref = _norm_cell(row.get(c_ref))
             desc = _norm_cell(row.get(c_desc)) if c_desc else ""
-            try:
-                haber = limpiar_monto(row.get(c_haber), "estandar")
-            except ValueError:
-                haber = 0.0
-            try:
-                debe = limpiar_monto(row.get(c_debe), "estandar")
-            except ValueError:
-                debe = 0.0
 
-            if haber > 0:
-                movs.append(
-                    MovimientoParsed(
-                        fecha=fd,
-                        referencia=ref,
-                        concepto=desc,
-                        monto=abs(haber),
-                        es_ingreso=True,
-                        banco_detectado="Banesco",
-                    )
+            try:
+                monto_raw = limpiar_monto(row.get(c_monto), "estandar")
+            except ValueError as e:
+                errores.append(f"Fila {n}: monto inválido ({e}).")
+                continue
+
+            if monto_raw == 0:
+                continue
+
+            es_ingreso = monto_raw > 0
+            monto = abs(monto_raw)
+
+            movs.append(
+                MovimientoParsed(
+                    fecha=fd,
+                    referencia=ref,
+                    concepto=desc,
+                    monto=monto,
+                    es_ingreso=es_ingreso,
+                    banco_detectado="Banesco",
                 )
-            elif debe > 0:
-                movs.append(
-                    MovimientoParsed(
-                        fecha=fd,
-                        referencia=ref,
-                        concepto=desc,
-                        monto=abs(debe),
-                        es_ingreso=False,
-                        banco_detectado="Banesco",
-                    )
-                )
-            elif c_monto and row.get(c_monto) not in (None, "") and not (
-                isinstance(row.get(c_monto), float) and pd.isna(row.get(c_monto))
-            ):
-                advertencias.append(
-                    f"Fila {n}: Debe/Haber en cero; columna Monto ignorada para tipo de movimiento."
-                )
+            )
         except Exception as e:
             errores.append(f"Fila {n}: {e}")
 

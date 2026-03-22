@@ -43,9 +43,6 @@ def test_detectar_banesco():
                 "Descripción",
                 "Monto",
                 "Balance",
-                "Debe",
-                "Haber",
-                "Saldo",
             ]
         ]
     )
