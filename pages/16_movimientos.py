@@ -12,7 +12,7 @@ from repositories.conciliacion_repository import ConciliacionRepository
 from components.header import render_header
 from components.breadcrumb import render_breadcrumb
 from utils.auth import check_authentication, require_condominio
-from utils.bank_parser import MovimientoParsed, parsear_bytes
+from utils.bank_parser import MovimientoParsed, es_duplicado, parsear_bytes
 from utils.conciliacion import clasificar_alerta
 from utils.error_handler import DatabaseError
 from utils.supabase_compat import json_safe_date, json_safe_periodo
@@ -285,12 +285,40 @@ with tab_carga:
         if "bank_uploader_nonce" not in st.session_state:
             st.session_state.bank_uploader_nonce = 0
 
-        def _importar_movimientos_parsed(movs: list[MovimientoParsed]) -> int:
+        def _existentes_para_duplicados(rows: list[dict]) -> list[dict]:
+            out: list[dict] = []
+            for r in rows or []:
+                out.append(
+                    {
+                        "condominio_id": r.get("condominio_id"),
+                        "referencia": str(r.get("referencia") or "").strip(),
+                        "monto": float(r.get("monto_bs") or 0),
+                        "fecha": r.get("fecha"),
+                        "concepto": str(r.get("descripcion") or "").strip(),
+                    }
+                )
+            return out
+
+        def _importar_movimientos_parsed(
+            movs: list[MovimientoParsed],
+        ) -> tuple[int, int]:
+            """Retorna (insertados, omitidos_por_duplicado)."""
             inserted = 0
+            skipped = 0
+            cid = int(condominio_id)
+            try:
+                raw_ex = repo_mov.get_all(condominio_id, periodo_db)
+            except DatabaseError:
+                raw_ex = []
+            existentes = _existentes_para_duplicados(raw_ex)
             periodo_json = json_safe_periodo(periodo_db)
+
             for m in movs:
+                if es_duplicado(m, existentes, cid):
+                    skipped += 1
+                    continue
                 payload = {
-                    "condominio_id": int(condominio_id),
+                    "condominio_id": cid,
                     "periodo": periodo_json,
                     "fecha": json_safe_date(m.fecha),
                     "descripcion": (m.concepto or "").strip() or None,
@@ -304,6 +332,15 @@ with tab_carga:
                 }
                 created = repo_mov.create(payload)
                 inserted += 1
+                existentes.append(
+                    {
+                        "condominio_id": cid,
+                        "referencia": str(m.referencia or "").strip(),
+                        "monto": float(m.monto),
+                        "fecha": json_safe_date(m.fecha),
+                        "concepto": (m.concepto or "").strip(),
+                    }
+                )
                 if m.es_ingreso:
                     try:
                         sug = repo_conciliacion.sugerir_vinculacion(
@@ -328,7 +365,7 @@ with tab_carga:
                         )
                     except DatabaseError:
                         pass
-            return inserted
+            return inserted, skipped
 
         step = st.session_state.upload_step
 
@@ -460,13 +497,17 @@ with tab_carga:
                                 "Importando movimientos en la base de datos… "
                                 "No cierres esta pestaña."
                             ):
-                                n = _importar_movimientos_parsed(pr.movimientos)
+                                n, n_skip = _importar_movimientos_parsed(
+                                    pr.movimientos
+                                )
                             st.session_state.pop("_import_last_error", None)
                             st.session_state._import_ok_msg = (
                                 f"✅ Se guardaron **{n}** movimientos "
-                                f"({pr.banco}) en el período seleccionado."
+                                f"({pr.banco}) en el período seleccionado. "
+                                f"Omitidos por duplicado: **{n_skip}**."
                             )
                             st.session_state._import_ok_count = n
+                            st.session_state._import_ok_skipped = n_skip
                             st.session_state._import_ok_banco = pr.banco or ""
                             st.session_state._import_ok_file = nombre
                             st.session_state._import_fire_toast = True
@@ -487,17 +528,20 @@ with tab_carga:
                 "_import_ok_msg", "✅ Importación finalizada correctamente."
             )
             n_ok = st.session_state.pop("_import_ok_count", None)
+            n_skip = st.session_state.pop("_import_ok_skipped", None)
             banco_ok = st.session_state.pop("_import_ok_banco", "")
             archivo_ok = st.session_state.pop("_import_ok_file", "")
 
             st.success(msg)
             if n_ok is not None:
-                m1, m2, m3 = st.columns(3)
+                m1, m2, m3, m4 = st.columns(4)
                 with m1:
                     st.metric("Movimientos guardados", n_ok)
                 with m2:
-                    st.metric("Banco", banco_ok or "—")
+                    st.metric("Omitidos (duplicado)", n_skip if n_skip is not None else 0)
                 with m3:
+                    st.metric("Banco", banco_ok or "—")
+                with m4:
                     st.caption("Archivo")
                     st.write(archivo_ok or "—")
             st.info(

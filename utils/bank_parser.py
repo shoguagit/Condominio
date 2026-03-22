@@ -8,7 +8,7 @@ import io
 import re
 import unicodedata
 from dataclasses import dataclass, field
-from datetime import date
+from datetime import date, datetime
 from typing import Any
 
 import pandas as pd
@@ -167,6 +167,76 @@ def detectar_banco(df_raw: pd.DataFrame) -> str:
         "No se reconoce el formato del banco. "
         "Bancos soportados: BDV, Banesco, Bancamiga, Mercantil."
     )
+
+
+def _fecha_normalizada_para_duplicado(val: Any) -> str:
+    """Compara fechas como YYYY-MM-DD (date, ISO str, timestamps)."""
+    if val is None or (isinstance(val, float) and pd.isna(val)):
+        return ""
+    if isinstance(val, datetime):
+        return val.date().isoformat()
+    if isinstance(val, date):
+        return val.isoformat()
+    s = str(val).strip()
+    if "T" in s:
+        return s.split("T", 1)[0][:10]
+    return s[:10] if len(s) >= 10 else s
+
+
+def _montos_iguales_duplicado(a: float, b: Any) -> bool:
+    try:
+        return round(float(a), 2) == round(float(b), 2)
+    except (TypeError, ValueError):
+        return False
+
+
+def es_duplicado(
+    movimiento: MovimientoParsed,
+    existentes: list[dict],
+    condominio_id: int | None = None,
+) -> bool:
+    """
+    Verifica si el movimiento ya existe en la lista de existentes.
+
+    existentes: dicts con keys referencia, monto, fecha, concepto;
+    opcional condominio_id para alinear con la regla de negocio (mismo condominio).
+
+    Si referencia es None, '', '0', 'None' o 'nan' (como texto):
+        duplicado = mismo condominio (si aplica) + fecha + monto + concepto
+    Si referencia tiene valor real:
+        duplicado = mismo condominio (si aplica) + referencia + monto
+    """
+    ref_raw = movimiento.referencia
+    ref = str(ref_raw).strip() if ref_raw is not None else ""
+    ref_vacia = ref in ("", "0", "None", "nan") or ref.lower() == "nan"
+
+    fecha_mov = _fecha_normalizada_para_duplicado(movimiento.fecha)
+    concepto_mov = str(movimiento.concepto or "").strip()
+
+    for e in existentes:
+        if condominio_id is not None and "condominio_id" in e:
+            try:
+                if int(e["condominio_id"]) != int(condominio_id):
+                    continue
+            except (TypeError, ValueError):
+                continue
+
+        if ref_vacia:
+            fe = _fecha_normalizada_para_duplicado(e.get("fecha"))
+            conc_e = str(e.get("concepto", "") or "").strip()
+            if (
+                fe == fecha_mov
+                and _montos_iguales_duplicado(movimiento.monto, e.get("monto", 0))
+                and conc_e == concepto_mov
+            ):
+                return True
+        else:
+            er = str(e.get("referencia", "") or "").strip()
+            if er == ref and _montos_iguales_duplicado(
+                movimiento.monto, e.get("monto", 0)
+            ):
+                return True
+    return False
 
 
 def _totales(movs: list[MovimientoParsed]) -> tuple[float, float]:
