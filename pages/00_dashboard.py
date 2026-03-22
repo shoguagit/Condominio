@@ -12,6 +12,7 @@ import streamlit as st
 from components.header import render_header
 from config.supabase_client import get_supabase_client
 from repositories.dashboard_repository import DashboardRepository
+from repositories.notificacion_repository import NotificacionRepository
 from utils.auth import check_authentication
 from utils.dashboard_formatters import (
     color_cobranza,
@@ -52,11 +53,17 @@ cid = int(condominio_id)
 
 
 @st.cache_resource
-def _repo() -> DashboardRepository:
-    return DashboardRepository(get_supabase_client())
+def _repos() -> tuple[DashboardRepository, NotificacionRepository]:
+    c = get_supabase_client()
+    return DashboardRepository(c), NotificacionRepository(c)
 
 
-repo = _repo()
+repo, notif_repo = _repos()
+
+try:
+    _smtp_config_ok = notif_repo.obtener_config_smtp(cid) is not None
+except DatabaseError:
+    _smtp_config_ok = False
 
 st.title("📊 Dashboard")
 st.caption(
@@ -202,8 +209,21 @@ if int(mor.get("total_morosos") or 0) > 0:
         ]
     )
     st.dataframe(df, use_container_width=True, hide_index=True)
+    if _smtp_config_ok:
+        st.markdown(
+            '<p style="margin:8px 0 4px 0;padding:8px 12px;border-radius:8px;'
+            "background:#EBF5FB;border-left:4px solid #2E86C1;color:#1B4F72;"
+            'font-size:13px;"><strong>📧 Aviso interno:</strong> puede enviar '
+            "correos a morosos desde el menú <strong>Notificaciones</strong>.</p>",
+            unsafe_allow_html=True,
+        )
+    else:
+        st.caption(
+            "🔔 **Aviso interno:** configure el correo Gmail del condominio "
+            "(Condominios → Modificar → 📧 Configuración de correo) para enviar avisos."
+        )
     if st.button("📧 Notificar morosos", key="btn_notify_morosos"):
-        st.info("Próximamente: Fase 5-B")
+        st.switch_page("pages/21_notificaciones.py")
 else:
     st.success("✅ Sin morosos con más de 1 mes de atraso")
 

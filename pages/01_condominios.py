@@ -2,7 +2,9 @@ import streamlit as st
 
 from config.supabase_client import get_supabase_client
 from repositories.condominio_repository import CondominioRepository
+from repositories.notificacion_repository import NotificacionRepository
 from repositories.pais_repository import PaisRepository
+from utils.email_sender import EmailConfig, validar_config_smtp
 from components.header import render_header
 from components.breadcrumb import render_breadcrumb
 from components.crud_toolbar import init_toolbar_state, get_current_index, set_current_index
@@ -24,9 +26,13 @@ st.set_page_config(page_title="Condominios", page_icon="🏢", layout="wide")
 @st.cache_resource
 def get_repos():
     client = get_supabase_client()
-    return CondominioRepository(client), PaisRepository(client)
+    return (
+        CondominioRepository(client),
+        PaisRepository(client),
+        NotificacionRepository(client),
+    )
 
-repo_condo, repo_pais = get_repos()
+repo_condo, repo_pais, repo_notif = get_repos()
 
 # ── Estado de la página ───────────────────────────────────────────────────────
 def _init_state():
@@ -235,6 +241,71 @@ with col_main:
                     max_chars=30,
                 )
 
+            _smtp_edit = bool(is_edit and current_rec)
+            _smtp_cfg = None
+            if _smtp_edit and current_rec.get("id"):
+                _smtp_cfg = repo_notif.obtener_config_smtp(int(current_rec["id"]))
+            with st.expander("📧 Configuración de correo (notificaciones)", expanded=False):
+                if not _smtp_edit:
+                    st.caption(
+                        "Guarde el condominio primero y use **Modificar** para configurar "
+                        "correo y notificaciones a morosos."
+                    )
+                else:
+                    st.caption(
+                        "Para enviar avisos desde **Notificaciones**. Cuenta **@gmail.com** "
+                        "y **App Password** (no la contraseña normal)."
+                    )
+                def_smtp_em = (
+                    (
+                        (_smtp_cfg.get("smtp_email") if _smtp_cfg else "")
+                        or (current_rec.get("smtp_email") or "")
+                    )
+                    if _smtp_edit
+                    else ""
+                )
+                has_saved_pw = bool(
+                    ((_smtp_cfg or {}).get("smtp_app_password") or "").strip()
+                    or (current_rec.get("smtp_app_password") or "").strip()
+                ) if _smtp_edit else False
+                def_nom_rem = (
+                    (
+                        (_smtp_cfg.get("smtp_nombre_remitente") if _smtp_cfg else None)
+                        or current_rec.get("smtp_nombre_remitente")
+                        or "Administración del Condominio"
+                    )
+                    if _smtp_edit
+                    else "Administración del Condominio"
+                )
+                smtp_email_in = st.text_input(
+                    "Correo Gmail del administrador",
+                    value=def_smtp_em,
+                    placeholder="admin@gmail.com",
+                    max_chars=255,
+                    disabled=not _smtp_edit,
+                    key=f"condo_smtp_email_{form_key}",
+                )
+                app_pw_in = st.text_input(
+                    "App Password de Gmail",
+                    value="",
+                    type="password",
+                    placeholder=(
+                        "Dejar vacío para conservar la guardada"
+                        if has_saved_pw
+                        else "16 caracteres (p. ej. xxxx xxxx xxxx xxxx)"
+                    ),
+                    help="Generar en: https://myaccount.google.com/apppasswords",
+                    disabled=not _smtp_edit,
+                    key=f"condo_smtp_app_pw_{form_key}",
+                )
+                nombre_rem_in = st.text_input(
+                    "Nombre del remitente",
+                    value=str(def_nom_rem),
+                    max_chars=255,
+                    disabled=not _smtp_edit,
+                    key=f"condo_smtp_nombre_rem_{form_key}",
+                )
+
             col_save, col_cancel = st.columns([1, 1])
             with col_save:
                 guardar = st.form_submit_button(
@@ -244,12 +315,48 @@ with col_main:
                 cancelar = st.form_submit_button(
                     "Cancelar", use_container_width=True
                 )
+            guardar_smtp = st.form_submit_button(
+                "💾 Guardar configuración de correo",
+                use_container_width=True,
+                disabled=not _smtp_edit,
+            )
 
         st.markdown("</div></div>", unsafe_allow_html=True)
 
         if cancelar:
             st.session_state.condo_modo = None
             st.rerun()
+
+        if guardar_smtp and is_edit and current_rec:
+            _pw_row = repo_notif.obtener_config_smtp(int(current_rec["id"]))
+            pw_stored = (
+                (_pw_row.get("smtp_app_password") or "")
+                if _pw_row
+                else (current_rec.get("smtp_app_password") or "")
+            )
+            pw_eff = (app_pw_in or "").strip() or pw_stored
+            cfg = EmailConfig(
+                (smtp_email_in or "").strip(),
+                pw_eff,
+                (nombre_rem_in or "").strip(),
+            )
+            errs = validar_config_smtp(cfg)
+            if errs:
+                for e in errs:
+                    st.error(e)
+            else:
+                try:
+                    repo_notif.actualizar_config_smtp(
+                        int(current_rec["id"]),
+                        (smtp_email_in or "").strip(),
+                        (app_pw_in or "").strip() or None,
+                        (nombre_rem_in or "").strip(),
+                    )
+                    st.success("✅ Configuración de correo guardada.")
+                    st.session_state.condo_records = None
+                    st.rerun()
+                except DatabaseError as e:
+                    st.error(f"❌ {e}")
 
         if guardar:
             # Validaciones
@@ -386,6 +493,64 @@ with col_main:
                     f"**Día límite de pago**: "
                     f"{int(dlp) if dlp is not None else 15} (del mes)"
                 )
+        cid_det = int(current_rec["id"])
+        smtp_cfg_det = repo_notif.obtener_config_smtp(cid_det)
+        with st.expander("📧 Notificaciones: correo Gmail (SMTP)", expanded=False):
+            st.caption(
+                "Cuenta **@gmail.com** con **App Password**. "
+                "Vacío en contraseña = conservar la guardada."
+            )
+            de = (
+                st.text_input(
+                    "Correo Gmail del administrador",
+                    value=(smtp_cfg_det or {}).get("smtp_email") or "",
+                    max_chars=255,
+                    key=f"condo_smtp_det_email_{cid_det}",
+                )
+            )
+            st.text_input(
+                "App Password de Gmail",
+                type="password",
+                placeholder=(
+                    "Dejar vacío para conservar la guardada"
+                    if (smtp_cfg_det and (smtp_cfg_det.get("smtp_app_password") or "").strip())
+                    else "16+ caracteres"
+                ),
+                key=f"condo_smtp_det_pw_{cid_det}",
+            )
+            dn = st.text_input(
+                "Nombre del remitente",
+                value=(smtp_cfg_det or {}).get("smtp_nombre_remitente")
+                or "Administración del Condominio",
+                max_chars=255,
+                key=f"condo_smtp_det_nom_{cid_det}",
+            )
+            if st.button("Guardar configuración SMTP", key=f"condo_smtp_det_save_{cid_det}"):
+                pw_t = (st.session_state.get(f"condo_smtp_det_pw_{cid_det}") or "").strip()
+                pw_keep = (smtp_cfg_det or {}).get("smtp_app_password") or ""
+                pw_val = pw_t if pw_t else pw_keep
+                ec = EmailConfig(
+                    smtp_email=(de or "").strip(),
+                    app_password=pw_val,
+                    nombre_remitente=(dn or "").strip(),
+                )
+                verrs = validar_config_smtp(ec)
+                if verrs:
+                    for err in verrs:
+                        st.error(f"❌ {err}")
+                else:
+                    try:
+                        repo_notif.actualizar_config_smtp(
+                            cid_det,
+                            (de or "").strip(),
+                            pw_t if pw_t else None,
+                            (dn or "").strip(),
+                        )
+                        st.success("✅ Configuración SMTP guardada.")
+                        st.session_state.condo_records = None
+                        st.rerun()
+                    except DatabaseError as e:
+                        st.error(f"❌ {e}")
 
 with col_help:
     render_help_panel(

@@ -122,7 +122,7 @@ class DashboardRepository:
             self.client.table("cuotas_unidad")
             .select(
                 "unidad_id, saldo_anterior_bs, total_a_pagar_bs, cuota_calculada_bs, "
-                "unidades(codigo, numero), propietarios(nombre)"
+                "unidades(codigo, numero), propietarios(nombre, correo)"
             )
             .eq("condominio_id", cid)
             .eq("periodo", periodo)
@@ -146,6 +146,11 @@ class DashboardRepository:
                         "unidad_id": int(uid) if uid is not None else None,
                         "unidad": str(codigo).strip() or "—",
                         "propietario": (prop.get("nombre") or "—") if prop else "—",
+                        "email": (
+                            (prop.get("correo") or prop.get("email") or "").strip()
+                            if prop
+                            else ""
+                        ),
                         "saldo_bs": round(total_pagar, 2),
                         "meses_atraso": 0,
                     }
