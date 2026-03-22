@@ -49,6 +49,29 @@ def mes_proceso_a_mmyyyy_default(raw: str) -> str:
     return ""
 
 
+def detectar_periodo_archivo(
+    movimientos: list[MovimientoParsed],
+    fallback_periodo_db: str,
+) -> str:
+    """
+    Período YYYY-MM-01 más frecuente según las fechas del archivo.
+    Si no hay fechas, intenta mes_proceso y luego fallback_periodo_db.
+    """
+    periodos = [
+        f"{m.fecha.year}-{str(m.fecha.month).zfill(2)}-01"
+        for m in movimientos
+        if getattr(m, "fecha", None) is not None
+    ]
+    if periodos:
+        return Counter(periodos).most_common(1)[0][0]
+    raw = str(st.session_state.get("mes_proceso") or "").strip()
+    if raw:
+        ok, _, pdb = periodo_to_date_str(raw)
+        if ok and pdb:
+            return pdb[:10]
+    return (fallback_periodo_db or "")[:10]
+
+
 st.set_page_config(page_title="Movimientos Bancarios", page_icon="🏦", layout="wide")
 check_authentication()
 render_header()
@@ -331,17 +354,19 @@ with tab_carga:
 
         def _importar_movimientos_parsed(
             movs: list[MovimientoParsed],
+            periodo_import_db: str,
         ) -> tuple[int, int]:
-            """Retorna (insertados, omitidos_por_duplicado)."""
+            """Retorna (insertados, omitidos_por_duplicado). periodo_import_db: YYYY-MM-01."""
             inserted = 0
             skipped = 0
             cid = int(condominio_id)
+            periodo_ym_imp = periodo_import_db[:7]
             try:
-                raw_ex = repo_mov.get_all(condominio_id, periodo_db)
+                raw_ex = repo_mov.get_all(condominio_id, periodo_import_db)
             except DatabaseError:
                 raw_ex = []
             existentes = _existentes_para_duplicados(raw_ex)
-            periodo_json = json_safe_periodo(periodo_db)
+            periodo_json = json_safe_periodo(periodo_import_db)
 
             for m in movs:
                 if es_duplicado(m, existentes, cid):
@@ -376,7 +401,7 @@ with tab_carga:
                         sug = repo_conciliacion.sugerir_vinculacion(
                             int(created["id"]),
                             condominio_id,
-                            periodo_db,
+                            periodo_import_db,
                         )
                         ms = (
                             float(sug["pago"]["monto_bs"])
@@ -387,7 +412,7 @@ with tab_carga:
                             float(created.get("monto_bs") or 0),
                             ms,
                             m.fecha,
-                            periodo_ym,
+                            periodo_ym_imp,
                         )
                         repo_mov.update(
                             int(created["id"]),
@@ -420,8 +445,24 @@ with tab_carga:
                     use_container_width=True,
                 ):
                     try:
-                        st.session_state.parse_result = parsear_bytes(file.getvalue())
+                        pr_new = parsear_bytes(file.getvalue())
+                        st.session_state.parse_result = pr_new
                         st.session_state.archivo_nombre = file.name
+                        st.session_state.pop("periodo_import_override", None)
+                        pdet = detectar_periodo_archivo(
+                            pr_new.movimientos, periodo_db
+                        )
+                        if len(pdet) >= 10:
+                            st.session_state["_periodo_import_default_mm"] = (
+                                f"{pdet[5:7]}/{pdet[:4]}"
+                            )
+                        else:
+                            st.session_state["_periodo_import_default_mm"] = (
+                                mes_proceso_a_mmyyyy_default(
+                                    str(st.session_state.get("mes_proceso") or "")
+                                )
+                                or mes_proceso_a_mmyyyy_default(periodo_db)
+                            )
                         st.session_state.upload_step = 2
                         st.rerun()
                     except Exception as e:
@@ -504,18 +545,46 @@ with tab_carga:
                 else:
                     st.info("No hay movimientos válidos para importar.")
 
+                _def_mm = st.session_state.get("_periodo_import_default_mm") or ""
+                if not _def_mm:
+                    _pd = detectar_periodo_archivo(pr.movimientos, periodo_db)
+                    _def_mm = (
+                        f"{_pd[5:7]}/{_pd[:4]}" if len(_pd) >= 10 else ""
+                    ) or mes_proceso_a_mmyyyy_default(periodo_db)
+
+                st.divider()
+                st.markdown("##### Período contable del archivo")
+                st.info(
+                    f"Período detectado (mes más frecuente en las fechas del archivo): "
+                    f"**{_def_mm}**. Ajusta solo si el extracto mezcla varios meses."
+                )
+                periodo_override = st.text_input(
+                    "📅 Período del archivo (MM/YYYY)",
+                    value=_def_mm,
+                    key="periodo_import_override",
+                    help="Detectado automáticamente. Corrígelo si el archivo "
+                    "tiene fechas de varios meses.",
+                )
+                _ym_imp = convertir_periodo(periodo_override)
+                periodo_import = f"{_ym_imp}-01" if _ym_imp else ""
+                if periodo_override.strip() and not _ym_imp:
+                    st.warning(
+                        "⚠️ Formato de período no reconocido. Use **MM/YYYY** (ej: 01/2026)."
+                    )
+
                 b1, b2 = st.columns(2)
                 with b1:
                     if st.button("← Cambiar archivo", use_container_width=True):
                         st.session_state.upload_step = 1
                         st.session_state.parse_result = None
                         st.session_state.archivo_nombre = ""
+                        st.session_state.pop("periodo_import_override", None)
                         st.session_state.bank_uploader_nonce = (
                             int(st.session_state.bank_uploader_nonce) + 1
                         )
                         st.rerun()
                 with b2:
-                    disabled = not pr.movimientos
+                    disabled = not pr.movimientos or not periodo_import
                     if st.button(
                         "Importar a la base de datos",
                         type="primary",
@@ -523,23 +592,29 @@ with tab_carga:
                         disabled=disabled,
                     ):
                         try:
+                            if not periodo_import or len(periodo_import) < 10:
+                                raise DatabaseError(
+                                    "Período inválido. Indique MM/YYYY correcto."
+                                )
                             with st.spinner(
                                 "Importando movimientos en la base de datos… "
                                 "No cierres esta pestaña."
                             ):
                                 n, n_skip = _importar_movimientos_parsed(
-                                    pr.movimientos
+                                    pr.movimientos,
+                                    periodo_import,
                                 )
                             st.session_state.pop("_import_last_error", None)
                             st.session_state._import_ok_msg = (
                                 f"✅ Se guardaron **{n}** movimientos "
-                                f"({pr.banco}) en el período seleccionado. "
+                                f"({pr.banco}) en período **{periodo_import}**. "
                                 f"Omitidos por duplicado: **{n_skip}**."
                             )
                             st.session_state._import_ok_count = n
                             st.session_state._import_ok_skipped = n_skip
                             st.session_state._import_ok_banco = pr.banco or ""
                             st.session_state._import_ok_file = nombre
+                            st.session_state._import_ok_periodo = periodo_import
                             st.session_state._import_fire_toast = True
                             st.session_state.upload_step = 3
                             st.rerun()
@@ -561,17 +636,20 @@ with tab_carga:
             n_skip = st.session_state.pop("_import_ok_skipped", None)
             banco_ok = st.session_state.pop("_import_ok_banco", "")
             archivo_ok = st.session_state.pop("_import_ok_file", "")
+            periodo_ok = st.session_state.pop("_import_ok_periodo", None)
 
             st.success(msg)
             if n_ok is not None:
-                m1, m2, m3, m4 = st.columns(4)
+                m1, m2, m3, m4, m5 = st.columns(5)
                 with m1:
                     st.metric("Movimientos guardados", n_ok)
                 with m2:
                     st.metric("Omitidos (duplicado)", n_skip if n_skip is not None else 0)
                 with m3:
-                    st.metric("Banco", banco_ok or "—")
+                    st.metric("Período (BD)", periodo_ok or "—")
                 with m4:
+                    st.metric("Banco", banco_ok or "—")
+                with m5:
                     st.caption("Archivo")
                     st.write(archivo_ok or "—")
             st.info(
