@@ -15,6 +15,7 @@ from utils.auth import check_authentication, require_condominio
 from utils.bank_parser import MovimientoParsed, parsear_bytes
 from utils.conciliacion import clasificar_alerta
 from utils.error_handler import DatabaseError
+from utils.supabase_compat import json_safe_date, json_safe_periodo
 from utils.validators import validate_periodo, periodo_to_date_str
 
 
@@ -286,12 +287,12 @@ with tab_carga:
 
         def _importar_movimientos_parsed(movs: list[MovimientoParsed]) -> int:
             inserted = 0
+            periodo_json = json_safe_periodo(periodo_db)
             for m in movs:
                 payload = {
-                    "condominio_id": condominio_id,
-                    "periodo": periodo_db,
-                    # Supabase/JSON no serializa datetime.date; ISO es válido para columna DATE
-                    "fecha": m.fecha.isoformat(),
+                    "condominio_id": int(condominio_id),
+                    "periodo": periodo_json,
+                    "fecha": json_safe_date(m.fecha),
                     "descripcion": (m.concepto or "").strip() or None,
                     "referencia": (m.referencia or "").strip() or None,
                     "tipo": "ingreso" if m.es_ingreso else "egreso",
@@ -371,6 +372,16 @@ with tab_carga:
                     st.session_state.upload_step = 1
                     st.rerun()
             else:
+                err_imp = st.session_state.get("_import_last_error")
+                if err_imp:
+                    st.error(
+                        f"❌ **La importación falló** (no se guardó nada nuevo en este intento):\n\n"
+                        f"{err_imp}"
+                    )
+                    if st.button("Ocultar aviso", key="dismiss_import_err"):
+                        del st.session_state["_import_last_error"]
+                        st.rerun()
+
                 if pr.banco:
                     st.success(f"🏦 Banco detectado: **{pr.banco}**")
                 else:
@@ -445,21 +456,56 @@ with tab_carga:
                         disabled=disabled,
                     ):
                         try:
-                            n = _importar_movimientos_parsed(pr.movimientos)
+                            with st.spinner(
+                                "Importando movimientos en la base de datos… "
+                                "No cierres esta pestaña."
+                            ):
+                                n = _importar_movimientos_parsed(pr.movimientos)
+                            st.session_state.pop("_import_last_error", None)
                             st.session_state._import_ok_msg = (
-                                f"✅ Insertados **{n}** movimientos desde {pr.banco}."
+                                f"✅ Se guardaron **{n}** movimientos "
+                                f"({pr.banco}) en el período seleccionado."
                             )
+                            st.session_state._import_ok_count = n
+                            st.session_state._import_ok_banco = pr.banco or ""
+                            st.session_state._import_ok_file = nombre
+                            st.session_state._import_fire_toast = True
                             st.session_state.upload_step = 3
                             st.rerun()
                         except DatabaseError as err:
+                            st.session_state["_import_last_error"] = str(err)
                             st.error(f"❌ {err}")
+                            st.rerun()
                         except Exception as err:
+                            st.session_state["_import_last_error"] = str(err)
                             st.error(f"❌ Error al importar: {err}")
+                            st.rerun()
 
         elif step == 3:
             st.markdown("##### Paso 3/3 — Importación completada")
-            msg = st.session_state.pop("_import_ok_msg", "✅ Proceso finalizado.")
+            msg = st.session_state.pop(
+                "_import_ok_msg", "✅ Importación finalizada correctamente."
+            )
+            n_ok = st.session_state.pop("_import_ok_count", None)
+            banco_ok = st.session_state.pop("_import_ok_banco", "")
+            archivo_ok = st.session_state.pop("_import_ok_file", "")
+
             st.success(msg)
+            if n_ok is not None:
+                m1, m2, m3 = st.columns(3)
+                with m1:
+                    st.metric("Movimientos guardados", n_ok)
+                with m2:
+                    st.metric("Banco", banco_ok or "—")
+                with m3:
+                    st.caption("Archivo")
+                    st.write(archivo_ok or "—")
+            st.info(
+                "Los movimientos ya están en el listado del período. "
+                "Puedes revisarlos en la pestaña **📄 Listado** o conciliar en **🔍 Conciliación**."
+            )
+            if st.session_state.pop("_import_fire_toast", False):
+                st.toast("Importación completada", icon="✅")
             if st.button("Cargar otro archivo", type="primary", use_container_width=True):
                 st.session_state.upload_step = 1
                 st.session_state.parse_result = None
