@@ -150,6 +150,8 @@ with col_main:
         def_activo   = current_rec.get("activo", True)         if is_edit and current_rec else True
         def_dia_lim  = int(current_rec.get("dia_limite_pago") or 15) if is_edit and current_rec else 15
 
+        logo_file_ef = None
+        guardar_logo = False
         with st.form(form_key):
             st.markdown(
                 '<p class="form-section-hdr">Datos generales</p>',
@@ -310,6 +312,26 @@ with col_main:
                     key=f"condo_smtp_nombre_rem_{form_key}",
                 )
 
+            if is_edit and current_rec.get("id"):
+                condominio_id_logo = int(current_rec["id"])
+                with st.expander("🖼️ Logo del condominio", expanded=False):
+                    st.caption(
+                        "El logo aparece en el encabezado de los estados "
+                        "de cuenta PDF. PNG o JPG, máximo 2MB."
+                    )
+                    logo_actual = current_rec.get("logo_url") or ""
+                    if logo_actual.startswith("data:"):
+                        st.image(logo_actual, width=150, caption="Logo actual")
+                    logo_file_ef = st.file_uploader(
+                        "Subir nuevo logo",
+                        type=["png", "jpg", "jpeg"],
+                        key=f"logo_upload_{form_key}_{condominio_id_logo}",
+                    )
+                guardar_logo = st.form_submit_button(
+                    "💾 Guardar logo",
+                    use_container_width=True,
+                )
+
             col_save, col_cancel = st.columns([1, 1])
             with col_save:
                 guardar = st.form_submit_button(
@@ -330,6 +352,26 @@ with col_main:
         if cancelar:
             st.session_state.condo_modo = None
             st.rerun()
+
+        if guardar_logo and is_edit and current_rec and current_rec.get("id"):
+            cid_logo_save = int(current_rec["id"])
+            if logo_file_ef is None:
+                st.warning("Seleccione un archivo de imagen para el logo.")
+            elif logo_file_ef.size > 2 * 1024 * 1024:
+                st.error("❌ El archivo supera 2MB")
+            else:
+                raw = logo_file_ef.read()
+                ext = (getattr(logo_file_ef, "name", "") or "").lower().split(".")[-1] or "png"
+                mime = "jpeg" if ext in ("jpg", "jpeg") else "png"
+                logo_b64 = base64.b64encode(raw).decode("utf-8")
+                logo_url_val = f"data:image/{mime};base64,{logo_b64}"
+                try:
+                    repo_ec.actualizar_logo_url(cid_logo_save, logo_url_val)
+                    st.success("✅ Logo guardado")
+                    st.session_state.condo_records = None
+                    st.rerun()
+                except DatabaseError as e:
+                    st.error(f"❌ {e}")
 
         if guardar_smtp and is_edit and current_rec:
             _pw_row = repo_notif.obtener_config_smtp(int(current_rec["id"]))

@@ -22,8 +22,6 @@ from reportlab.platypus import (
     TableStyle,
 )
 
-from utils.pdf_generator import monto_bs_a_usd
-
 AZUL_CONDOMINIO = colors.HexColor("#1B4F8A")
 AMARILLO_HEADER = colors.HexColor("#FFFACD")
 GRIS_FILA = colors.HexColor("#F5F5F5")
@@ -44,13 +42,6 @@ def _esc(s: str) -> str:
 
 def _fmt_usd(v: float) -> str:
     return f"${float(v):,.2f}"
-
-
-def _fmt_bs_ref(monto_bs: float, tasa: float) -> str:
-    if tasa and float(tasa) > 0:
-        usd = monto_bs_a_usd(float(monto_bs), float(tasa))
-        return f"{_fmt_usd(usd)} (Bs. {float(monto_bs):,.2f})"
-    return f"Bs. {float(monto_bs):,.2f}"
 
 
 def _pdf_error_bytes(msg: str = "Error al generar el documento") -> bytes:
@@ -221,12 +212,12 @@ def _generar_estado_cuenta_pdf_impl(
 
     # —— Datos propietario (amarillo) ——
     mes_label = (mes_corto or periodo_nombre or "MES")[:12]
-    monto_line = _fmt_bs_ref(cuota_bs, tasa_cambio)
+    monto_usd_txt = f"${float(cuota_usd):,.2f}"
     data_y = [
         ["Propietario", _esc(propietario_nombre), "MOV.MES", mes_label],
         ["Correo", _esc(propietario_email), "Inmueble", _esc(unidad_codigo)],
-        ["Emisión", _esc(emision_str or "—"), "Alícuota", f"{float(indiviso_pct):.4f}"],
-        ["", "", "Monto USD", monto_line],
+        ["Emisión", _esc(emision_str or "—"), "Alícuota", f"{float(indiviso_pct):.2f}%"],
+        ["", "", "Monto USD", monto_usd_txt],
         ["Acumulado US$", _fmt_usd(acumulado_usd), "Mes(es)", str(int(meses_acumulados))],
     ]
     cw = [1.25 * inch, col_rest / 2 - 0.6 * inch, 1.0 * inch, col_rest / 2 - 0.65 * inch]
