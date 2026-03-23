@@ -93,6 +93,30 @@ def _repos():
 
 ec_repo, notif_repo = _repos()
 
+
+def _obtener_datos_para_pdf(
+    unidad_id: int,
+    condominio_id_: int,
+    periodo_sql: str,
+) -> tuple[dict | None, str | None]:
+    """
+    Llama a ``obtener_datos_unidad_periodo`` sin propagar excepciones a Streamlit.
+    Retorna ``(datos, None)`` o ``(None, mensaje)`` si falla (p. ej. ``DatabaseError``).
+    """
+    try:
+        out = ec_repo.obtener_datos_unidad_periodo(unidad_id, condominio_id_, periodo_sql)
+        return out, None
+    except Exception as e:
+        _log_ec.warning(
+            "_obtener_datos_para_pdf: unidad_id=%s condominio_id=%s periodo=%r: %s",
+            unidad_id,
+            condominio_id_,
+            periodo_sql,
+            e,
+        )
+        return None, str(e)
+
+
 st.title("📄 Estados de cuenta masivo")
 st.caption(
     "Genera y envía PDFs de estado de cuenta (recibo venezolano). "
@@ -370,24 +394,8 @@ tasa_cfg = float(config.get("tasa_cambio") or 0)
 
 
 def _fetch_datos(uid: int, condominio_id_: int, per: str):
-    try:
-        return ec_repo.obtener_datos_unidad_periodo(uid, condominio_id_, per)
-    except DatabaseError as e:
-        _log_ec.warning(
-            "_fetch_datos: DatabaseError unidad_id=%s periodo=%r: %s",
-            uid,
-            per,
-            e,
-        )
-        return None
-    except Exception as e:
-        _log_ec.warning(
-            "_fetch_datos: error unidad_id=%s periodo=%r: %s",
-            uid,
-            per,
-            e,
-        )
-        return None
+    datos, _err = _obtener_datos_para_pdf(uid, condominio_id_, per)
+    return datos
 
 
 alertas = calcular_alertas_coherencia(
@@ -447,14 +455,16 @@ else:
     if st.button("🔍 Generar vista previa (primera seleccionada)", key="ec_preview"):
         primera = preview_targets[0]
         with st.spinner("Generando PDF…"):
-            try:
-                datos = ec_repo.obtener_datos_unidad_periodo(
-                    primera["unidad_id"], cid, periodo_db10
+            datos, err_pdf = _obtener_datos_para_pdf(
+                primera["unidad_id"], cid, periodo_db10
+            )
+            if err_pdf:
+                st.error(
+                    "❌ **No se pudo consultar la cuota** para generar el PDF.\n\n"
+                    f"{err_pdf}\n\n"
+                    "Revise el período, permisos (RLS) en Supabase o los logs del servidor."
                 )
-            except DatabaseError as e:
-                st.error(f"❌ {e}")
-                datos = None
-            if not datos:
+            elif not datos:
                 st.warning(
                     "No hay datos de cuota para esa unidad en el período. "
                     "Genere cuotas en **Proceso mensual**."
@@ -519,12 +529,9 @@ elif confirmar and puede_enviar and st.button("🚀 Enviar estados de cuenta", t
     prog = st.progress(0, text="Iniciando envío…")
 
     for i, unidad in enumerate(orden_envio):
-        try:
-            datos = ec_repo.obtener_datos_unidad_periodo(
-                unidad["unidad_id"], cid, periodo_db10
-            )
-        except DatabaseError:
-            datos = None
+        datos, _err_env = _obtener_datos_para_pdf(
+            unidad["unidad_id"], cid, periodo_db10
+        )
 
         if not datos:
             sin_datos += 1
