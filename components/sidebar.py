@@ -501,6 +501,7 @@ def render_sidebar() -> None:
         st.page_link("pages/16_movimientos.py",       label="🏦  Movimientos Bancarios")
         st.page_link("pages/17_proceso_mensual.py",   label="🗓️  Proceso Mensual")
         st.page_link("pages/21_notificaciones.py",    label="📧  Notificaciones")
+        st.page_link("pages/22_estados_cuenta_masivo.py", label="📄  Estados de cuenta masivo")
         st.page_link("pages/18_estado_cuenta.py",     label="🧾  Estado de Cuenta")
         st.page_link("pages/08_conceptos_consumo.py", label="⚡  Consumo")
         st.page_link("pages/09_cuentas_bancos.py",    label="🏦  Cuentas / Bancos")

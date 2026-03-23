@@ -1,7 +1,10 @@
+import base64
+
 import streamlit as st
 
 from config.supabase_client import get_supabase_client
 from repositories.condominio_repository import CondominioRepository
+from repositories.estado_cuenta_repository import EstadoCuentaRepository
 from repositories.notificacion_repository import NotificacionRepository
 from repositories.pais_repository import PaisRepository
 from utils.email_sender import EmailConfig, validar_config_smtp
@@ -30,9 +33,10 @@ def get_repos():
         CondominioRepository(client),
         PaisRepository(client),
         NotificacionRepository(client),
+        EstadoCuentaRepository(client),
     )
 
-repo_condo, repo_pais, repo_notif = get_repos()
+repo_condo, repo_pais, repo_notif, repo_ec = get_repos()
 
 # ── Estado de la página ───────────────────────────────────────────────────────
 def _init_state():
@@ -500,13 +504,11 @@ with col_main:
                 "Cuenta **@gmail.com** con **App Password**. "
                 "Vacío en contraseña = conservar la guardada."
             )
-            de = (
-                st.text_input(
-                    "Correo Gmail del administrador",
-                    value=(smtp_cfg_det or {}).get("smtp_email") or "",
-                    max_chars=255,
-                    key=f"condo_smtp_det_email_{cid_det}",
-                )
+            de = st.text_input(
+                "Correo Gmail del administrador",
+                value=(smtp_cfg_det or {}).get("smtp_email") or "",
+                max_chars=255,
+                key=f"condo_smtp_det_email_{cid_det}",
             )
             st.text_input(
                 "App Password de Gmail",
@@ -551,6 +553,34 @@ with col_main:
                         st.rerun()
                     except DatabaseError as e:
                         st.error(f"❌ {e}")
+
+        with st.expander("🖼️ Logo del condominio (PDF / recibos)", expanded=False):
+            st.caption(
+                "El logo aparece en los **estados de cuenta** PDF. PNG o JPG, máximo 2 MB. "
+                "Se guarda como data URL en la base de datos."
+            )
+            logo_f = st.file_uploader(
+                "Subir logo",
+                type=["png", "jpg", "jpeg"],
+                key=f"condo_logo_up_{cid_det}",
+            )
+            if logo_f is not None:
+                raw = logo_f.read()
+                if len(raw) > 2 * 1024 * 1024:
+                    st.error("El archivo supera 2 MB.")
+                else:
+                    ext = (getattr(logo_f, "name", "") or "").lower().split(".")[-1]
+                    mime = "jpeg" if ext in ("jpg", "jpeg") else "png"
+                    b64 = base64.b64encode(raw).decode("utf-8")
+                    data_url = f"data:image/{mime};base64,{b64}"
+                    if st.button("💾 Guardar logo", key=f"condo_logo_save_{cid_det}"):
+                        try:
+                            repo_ec.actualizar_logo_url(cid_det, data_url)
+                            st.success("✅ Logo guardado.")
+                            st.session_state.condo_records = None
+                            st.rerun()
+                        except DatabaseError as e:
+                            st.error(f"❌ {e}")
 
 with col_help:
     render_help_panel(

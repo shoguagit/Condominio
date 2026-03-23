@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import smtplib
 from dataclasses import dataclass
+from email.mime.application import MIMEApplication
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 
@@ -201,4 +202,56 @@ def enviar_correo(config: EmailConfig, mensaje: EmailMessage) -> dict:
             )
         return {"exito": True, "error": None}
     except Exception as e:  # noqa: BLE001 — contrato: nunca propagar
+        return {"exito": False, "error": str(e)}
+
+
+def enviar_correo_con_adjunto(
+    config: EmailConfig,
+    destinatario_email: str,
+    destinatario_nombre: str,
+    asunto: str,
+    cuerpo: str,
+    adjunto_bytes: bytes,
+    adjunto_nombre: str,
+) -> dict:
+    """
+    Envía correo Gmail con PDF (u otro binario) adjunto.
+    Retorna: {'exito': bool, 'error': str | None}
+    NUNCA propaga excepciones.
+    """
+    try:
+        dest = (destinatario_email or "").strip()
+        if not dest:
+            return {"exito": False, "error": "Sin correo registrado"}
+
+        errs = validar_config_smtp(config)
+        if errs:
+            return {"exito": False, "error": "; ".join(errs)}
+
+        if not adjunto_bytes:
+            return {"exito": False, "error": "Adjunto vacío"}
+
+        msg = MIMEMultipart()
+        msg["Subject"] = (asunto or "").strip() or "Estado de cuenta"
+        msg["From"] = f"{(config.nombre_remitente or '').strip()} <{config.smtp_email.strip()}>"
+        msg["To"] = dest
+
+        msg.attach(MIMEText(cuerpo or "", "plain", "utf-8"))
+
+        nombre_adj = (adjunto_nombre or "adjunto.pdf").strip() or "adjunto.pdf"
+        part = MIMEApplication(adjunto_bytes, _subtype="pdf")
+        part.add_header("Content-Disposition", "attachment", filename=nombre_adj)
+        msg.attach(part)
+
+        pwd = _app_password_normalizado(config.app_password)
+        with smtplib.SMTP("smtp.gmail.com", 587, timeout=60) as server:
+            server.starttls()
+            server.login(config.smtp_email.strip(), pwd)
+            server.sendmail(
+                config.smtp_email.strip(),
+                [dest],
+                msg.as_string(),
+            )
+        return {"exito": True, "error": None}
+    except Exception as e:  # noqa: BLE001
         return {"exito": False, "error": str(e)}
