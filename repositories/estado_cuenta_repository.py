@@ -5,6 +5,7 @@ Datos para estados de cuenta PDF masivos (Fase 5-C) y configuración de recibo.
 from __future__ import annotations
 
 import logging
+import re
 from datetime import datetime
 from typing import Any
 from urllib.request import Request, urlopen
@@ -91,6 +92,7 @@ class EstadoCuentaRepository:
                 "id, nombre, email, numero_documento, logo_url, "
                 "pie_pagina_titular, pie_pagina_cuerpo, "
                 "smtp_email, smtp_app_password, smtp_nombre_remitente, "
+                "tesorero_email, tasa_cambio, "
                 "tipos_documento(nombre)"
             )
             .eq("id", int(condominio_id))
@@ -112,6 +114,8 @@ class EstadoCuentaRepository:
             "smtp_app_password": r.get("smtp_app_password") or "",
             "smtp_nombre_remitente": (r.get("smtp_nombre_remitente") or "").strip()
             or "Administración del Condominio",
+            "tesorero_email": (r.get("tesorero_email") or "").strip(),
+            "tasa_cambio": float(r.get("tasa_cambio") or 0),
         }
 
     @safe_db_operation("estado_cuenta.actualizar_pie_pagina")
@@ -142,6 +146,61 @@ class EstadoCuentaRepository:
         )
         rows = resp.data or []
         return rows[0] if rows else {}
+
+    @safe_db_operation("estado_cuenta.actualizar_tesorero_email")
+    def actualizar_tesorero_email(self, condominio_id: int, email: str | None) -> dict:
+        em = (email or "").strip() or None
+        resp = (
+            self.client.table(self._condo)
+            .update({"tesorero_email": em})
+            .eq("id", int(condominio_id))
+            .execute()
+        )
+        rows = resp.data or []
+        return rows[0] if rows else {}
+
+    @safe_db_operation("estado_cuenta.listar_todas_unidades")
+    def listar_todas_unidades(self, condominio_id: int) -> list[dict]:
+        """
+        Todas las unidades activas con datos de propietario (con o sin correo).
+        propietario_email: str, lista de str si hay varios separados por coma/; o None.
+        """
+        rows = (
+            self.client.table(self._uni)
+            .select("id, codigo, numero, activo, indiviso_pct, propietarios(nombre, correo)")
+            .eq("condominio_id", int(condominio_id))
+            .eq("activo", True)
+            .execute()
+        ).data or []
+        out: list[dict] = []
+        for r in rows:
+            p = r.get("propietarios") or {}
+            if not isinstance(p, dict):
+                p = {}
+            cod = (r.get("codigo") or r.get("numero") or str(r.get("id")) or "—").strip()
+            raw_correo = (p.get("correo") or p.get("email") or "").strip()
+            prop_email: str | list[str] | None
+            if not raw_correo:
+                prop_email = None
+            else:
+                parts = [x.strip() for x in re.split(r"[,;]+", raw_correo) if x.strip()]
+                if not parts:
+                    prop_email = None
+                elif len(parts) == 1:
+                    prop_email = parts[0]
+                else:
+                    prop_email = parts
+            out.append(
+                {
+                    "unidad_id": int(r["id"]),
+                    "unidad_codigo": cod,
+                    "propietario_nombre": (p.get("nombre") or "—").strip(),
+                    "propietario_email": prop_email,
+                    "indiviso_pct": float(r.get("indiviso_pct") or 0),
+                }
+            )
+        out.sort(key=lambda x: (x["unidad_codigo"].lower()))
+        return out
 
     @safe_db_operation("estado_cuenta.listar_unidades_con_email")
     def listar_unidades_con_email(self, condominio_id: int) -> list[dict]:

@@ -146,6 +146,7 @@ with col_main:
         )
         def_telefono = current_rec.get("telefono", "")         if is_edit and current_rec else ""
         def_email    = current_rec.get("email", "")            if is_edit and current_rec else ""
+        def_tesorero = (current_rec.get("tesorero_email") or "") if is_edit and current_rec else ""
         def_num_doc  = current_rec.get("numero_documento", "") if is_edit and current_rec else ""
         def_activo   = current_rec.get("activo", True)         if is_edit and current_rec else True
         def_dia_lim  = int(current_rec.get("dia_limite_pago") or 15) if is_edit and current_rec else 15
@@ -182,6 +183,12 @@ with col_main:
             with col2:
                 telefono = st.text_input("Teléfono", value=def_telefono, max_chars=20)
                 email    = st.text_input("Email", value=def_email, max_chars=100)
+                tesorero_email_in = st.text_input(
+                    "Correo del tesorero (opcional)",
+                    value=def_tesorero,
+                    max_chars=255,
+                    help="Recibe el PDF combinado con todos los recibos en **Estados de cuenta masivo**.",
+                )
 
                 # Moneda principal: se llena automático según país (no editable)
                 pais_nombre_sel = pais_map.get(pais_id_sel, {}).get("nombre", "")
@@ -435,6 +442,7 @@ with col_main:
                     "numero_documento":   (num_doc or "").strip(),
                     "telefono":           (telefono or "").strip() or None,
                     "email":              (email or "").strip() or None,
+                    "tesorero_email":     (tesorero_email_in or "").strip() or None,
                     "moneda_principal":   moneda_code,
                     "activo":             activo,
                     # Incluido en el mismo update/create (evita AttributeError si el
