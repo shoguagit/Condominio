@@ -68,11 +68,13 @@ class EstadoCuentaRepository:
                 logo_str = logo_url.decode("utf-8")
             else:
                 logo_str = str(logo_url).strip()
+            logo_str = logo_str.lstrip("\ufeff")
             if not logo_str:
                 return None
-            if logo_str.startswith("data:"):
+            low = logo_str.lower()
+            if low.startswith("data:"):
                 return logo_str.encode("utf-8")
-            if logo_str.startswith("http://") or logo_str.startswith("https://"):
+            if low.startswith("http://") or low.startswith("https://"):
                 req = Request(logo_str, headers={"User-Agent": "CondominioApp/1.0"})
                 with urlopen(req, timeout=15) as resp:
                     return resp.read()

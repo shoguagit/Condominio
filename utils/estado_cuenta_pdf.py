@@ -8,6 +8,7 @@ from __future__ import annotations
 import base64
 import io
 import logging
+import re
 from typing import Any
 
 from reportlab.lib import colors
@@ -69,6 +70,7 @@ def _logo_bytes_a_image(
     """
     Convierte logo a Image de ReportLab.
     Acepta data URL (str o bytes UTF-8), bytes de imagen cruda (p. ej. URL https), o None.
+    Usa Pillow cuando está disponible: JPEG y muchos PNG dependen de PIL en ReportLab.
     Dimensiones en centímetros.
     """
     if not logo_input:
@@ -77,37 +79,77 @@ def _logo_bytes_a_image(
         img_bytes: bytes | None = None
 
         if isinstance(logo_input, str):
-            data_str = logo_input.strip()
+            data_str = logo_input.strip().lstrip("\ufeff")
         elif isinstance(logo_input, bytes):
-            if logo_input.startswith(b"data:"):
-                data_str = logo_input.decode("utf-8", errors="strict").strip()
+            if logo_input[:5].lower() == b"data:":
+                data_str = logo_input.decode("utf-8", errors="strict").strip().lstrip("\ufeff")
             elif _es_imagen_binaria(logo_input):
                 img_bytes = logo_input
                 data_str = ""
             else:
-                data_str = logo_input.decode("utf-8", errors="ignore").strip()
+                data_str = logo_input.decode("utf-8", errors="ignore").strip().lstrip("\ufeff")
         else:
             return None
 
         if img_bytes is None:
-            if not data_str.startswith("data:"):
+            if not data_str.lower().startswith("data:"):
                 return None
             partes = data_str.split(",", 1)
             if len(partes) != 2:
                 return None
-            b64 = partes[1].strip()
+            # Saltos de línea/espacios en base64 rompen b64decode
+            b64 = re.sub(r"\s+", "", partes[1].strip())
             pad = (-len(b64)) % 4
             if pad:
                 b64 += "=" * pad
             img_bytes = base64.b64decode(b64)
 
-        buf = io.BytesIO(img_bytes)
-        buf.seek(0)
-        return Image(
-            ImageReader(buf),
-            width=float(ancho_cm) * cm,
-            height=float(alto_cm) * cm,
-        )
+        if not img_bytes:
+            return None
+
+        # Pillow: normaliza a PNG que ReportLab dibuja de forma fiable (JPEG casi siempre exige PIL)
+        try:
+            from PIL import Image as PILImage
+        except ImportError:
+            PILImage = None  # type: ignore[assignment,misc]
+
+        w = float(ancho_cm) * cm
+        h = float(alto_cm) * cm
+
+        if PILImage is not None:
+            pil = PILImage.open(io.BytesIO(img_bytes))
+            pil.load()
+            if pil.mode == "P":
+                if "transparency" in pil.info:
+                    pil = pil.convert("RGBA")
+                else:
+                    pil = pil.convert("RGB")
+            elif pil.mode in ("RGBA", "LA"):
+                pass
+            else:
+                pil = pil.convert("RGB")
+
+            out = io.BytesIO()
+            use_mask = pil.mode in ("RGBA", "LA")
+            pil.save(out, format="PNG")
+            out.seek(0)
+            reader = ImageReader(io.BytesIO(out.getvalue()))
+            if use_mask:
+                img = Image(reader, width=w, height=h, mask="auto")
+            else:
+                img = Image(reader, width=w, height=h)
+            img.hAlign = "LEFT"
+            return img
+
+        out = io.BytesIO(img_bytes)
+        out.seek(0)
+        reader = ImageReader(io.BytesIO(out.getvalue()))
+        if img_bytes[:4] == b"\x89PNG":
+            img = Image(reader, width=w, height=h, mask="auto")
+        else:
+            img = Image(reader, width=w, height=h)
+        img.hAlign = "LEFT"
+        return img
     except Exception as e:
         logger.warning("_logo_bytes_a_image: %s", e)
         return None
@@ -256,9 +298,11 @@ def _generar_estado_cuenta_pdf_impl(
         f"<font color='white' size='9'>email: {_esc(condominio_email)}</font><br/>"
         f"<font color='white' size='10'><b>Relación de Gastos</b></font>"
     )
+    # Altura mínima de fila: sin esto, la celda del logo puede quedar en 0 pt y no dibujar la imagen
     t_hdr = Table(
         [[logo_cell, Paragraph(hdr_right, styles["Normal"])]],
         colWidths=[col_logo, col_rest],
+        rowHeights=[1.05 * inch],
     )
     t_hdr.setStyle(
         TableStyle(

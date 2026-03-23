@@ -161,6 +161,11 @@ st.subheader("👁️ Vista previa")
 st.caption("Genera el PDF de la primera unidad del listado (misma plantilla que el envío masivo).")
 
 logo_b = ec_repo.obtener_logo_bytes(config.get("logo_url"))
+if (config.get("logo_url") or "").strip() and logo_b is None:
+    st.warning(
+        "⚠️ Hay **logo_url** en el condominio pero no se pudo preparar para el PDF. "
+        "Revise los logs del servidor o vuelva a guardar el logo en **Condominios**."
+    )
 
 if st.button("🔍 Generar vista previa (primera unidad)", key="ec_preview"):
     primera = unidades[0]
