@@ -54,25 +54,32 @@ class EstadoCuentaRepository:
         self._cuo = "cuotas_unidad"
         self._proc = "procesos_mensuales"
 
-    def obtener_logo_bytes(self, logo_url: str | None) -> str | bytes | None:
+    def obtener_logo_bytes(self, logo_url: str | bytes | None) -> bytes | None:
         """
-        Para data URL (data:image/...;base64,...) devuelve el string tal cual
-        para que el PDF decodifique con la misma lógica que la UI.
-        Para URL http(s) devuelve bytes descargados.
+        Retorna bytes para el generador PDF.
+        - data URL: el texto UTF-8 codificado en bytes (lo procesa _logo_bytes_a_image).
+        - http(s): bytes crudos de la imagen descargada.
         """
-        if not logo_url or not str(logo_url).strip():
+        if not logo_url:
             return None
-        s = str(logo_url).strip()
         try:
-            if s.startswith("data:"):
-                return s
-            if s.startswith("http://") or s.startswith("https://"):
-                req = Request(s, headers={"User-Agent": "CondominioApp/1.0"})
+            logo_str: str
+            if isinstance(logo_url, bytes):
+                logo_str = logo_url.decode("utf-8")
+            else:
+                logo_str = str(logo_url).strip()
+            if not logo_str:
+                return None
+            if logo_str.startswith("data:"):
+                return logo_str.encode("utf-8")
+            if logo_str.startswith("http://") or logo_str.startswith("https://"):
+                req = Request(logo_str, headers={"User-Agent": "CondominioApp/1.0"})
                 with urlopen(req, timeout=15) as resp:
                     return resp.read()
+            return None
         except Exception as e:
             logger.warning("obtener_logo_bytes: %s", e)
-        return None
+            return None
 
     @safe_db_operation("estado_cuenta.obtener_config_condominio_pdf")
     def obtener_config_condominio_pdf(self, condominio_id: int) -> dict | None:

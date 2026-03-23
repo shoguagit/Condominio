@@ -7,12 +7,13 @@ from __future__ import annotations
 
 import base64
 import io
+import logging
 from typing import Any
 
 from reportlab.lib import colors
 from reportlab.lib.pagesizes import letter
 from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
-from reportlab.lib.units import inch
+from reportlab.lib.units import cm, inch
 from reportlab.lib.utils import ImageReader
 from reportlab.platypus import (
     Image,
@@ -30,6 +31,8 @@ GRIS_TOTAL = colors.HexColor("#E8E8E8")
 BLANCO = colors.white
 NEGRO = colors.black
 
+logger = logging.getLogger(__name__)
+
 
 def _esc(s: str) -> str:
     t = str(s or "")
@@ -45,42 +48,68 @@ def _fmt_usd(v: float) -> str:
     return f"${float(v):,.2f}"
 
 
+def _es_imagen_binaria(b: bytes) -> bool:
+    """Magic bytes PNG / JPEG / GIF."""
+    if len(b) < 4:
+        return False
+    if b[:4] == b"\x89PNG":
+        return True
+    if b[:3] == b"\xff\xd8\xff":
+        return True
+    if b[:6] in (b"GIF87a", b"GIF89a"):
+        return True
+    return False
+
+
 def _logo_bytes_a_image(
     logo_input: bytes | str | None,
-    ancho: float,
-    alto: float,
+    ancho_cm: float,
+    alto_cm: float,
 ) -> Any:
     """
     Convierte logo a Image de ReportLab.
-    Acepta bytes de imagen cruda, data URL (str o bytes utf-8), o None.
+    Acepta data URL (str o bytes UTF-8), bytes de imagen cruda (p. ej. URL https), o None.
+    Dimensiones en centímetros.
     """
     if not logo_input:
         return None
     try:
-        img_bytes: bytes
-        if isinstance(logo_input, str):
-            data = logo_input.strip()
-            if data.startswith("data:"):
-                if "," not in data:
-                    return None
-                _hdr, b64_data = data.split(",", 1)
-                b64_data = b64_data.strip()
-                pad = (-len(b64_data)) % 4
-                if pad:
-                    b64_data += "=" * pad
-                img_bytes = base64.b64decode(b64_data)
-            else:
-                return None
-        else:
-            raw = logo_input
-            if raw.startswith(b"data:"):
-                s = raw.decode("utf-8", errors="ignore").strip()
-                return _logo_bytes_a_image(s, ancho, alto)
-            img_bytes = raw
+        img_bytes: bytes | None = None
 
-        bio = io.BytesIO(img_bytes)
-        return Image(ImageReader(bio), width=ancho, height=alto)
-    except Exception:
+        if isinstance(logo_input, str):
+            data_str = logo_input.strip()
+        elif isinstance(logo_input, bytes):
+            if logo_input.startswith(b"data:"):
+                data_str = logo_input.decode("utf-8", errors="strict").strip()
+            elif _es_imagen_binaria(logo_input):
+                img_bytes = logo_input
+                data_str = ""
+            else:
+                data_str = logo_input.decode("utf-8", errors="ignore").strip()
+        else:
+            return None
+
+        if img_bytes is None:
+            if not data_str.startswith("data:"):
+                return None
+            partes = data_str.split(",", 1)
+            if len(partes) != 2:
+                return None
+            b64 = partes[1].strip()
+            pad = (-len(b64)) % 4
+            if pad:
+                b64 += "=" * pad
+            img_bytes = base64.b64decode(b64)
+
+        buf = io.BytesIO(img_bytes)
+        buf.seek(0)
+        return Image(
+            ImageReader(buf),
+            width=float(ancho_cm) * cm,
+            height=float(alto_cm) * cm,
+        )
+    except Exception as e:
+        logger.warning("_logo_bytes_a_image: %s", e)
         return None
 
 
@@ -217,7 +246,8 @@ def _generar_estado_cuenta_pdf_impl(
     elems: list = []
 
     # —— Encabezado azul ——
-    logo_img = _logo_bytes_a_image(logo_bytes, 1.0 * inch, 1.0 * inch)
+    # ~1 pulgada en el encabezado (col_logo ≈ 1.15")
+    logo_img = _logo_bytes_a_image(logo_bytes, 2.54, 2.54)
     logo_cell: Any = logo_img if logo_img is not None else ""
 
     hdr_right = (

@@ -511,6 +511,9 @@ with col_main:
         estado = "Activo" if current_rec.get("activo") else "Inactivo"
 
         st.markdown("#### Detalle del condominio seleccionado")
+        logo_url_det = (current_rec.get("logo_url") or "").strip()
+        if logo_url_det and logo_url_det.startswith("data:"):
+            st.image(logo_url_det, width=120, caption="Logo del condominio")
         with st.container(border=True):
             col1, col2 = st.columns(2)
             with col1:
