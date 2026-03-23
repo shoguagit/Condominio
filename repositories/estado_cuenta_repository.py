@@ -287,10 +287,18 @@ class EstadoCuentaRepository:
 
     @safe_db_operation("estado_cuenta.obtener_datos_unidad_periodo")
     def obtener_datos_unidad_periodo(
-        self, unidad_id: int, condominio_id: int, periodo: str
+        self,
+        unidad_id: int,
+        condominio_id: int,
+        periodo: str,
+        tasa_cambio: float = 0.0,
     ) -> dict[str, Any] | None:
         """
         Datos financieros y de unidad para PDF (USD principal, Bs. referencia en cuota_bs).
+
+        ``tasa_cambio``: si > 0, se usa para convertir Bs.→USD (p. ej. ``st.session_state``).
+        Si es 0, se lee ``condominios.tasa_cambio``; si sigue en 0, se usa 1 y se registra warning
+        (evita división por cero y montos USD siempre en cero).
         """
         periodo_full, periodo_ym = _normaliza_periodo_sql_date(str(periodo))
         logger.info(
@@ -299,10 +307,22 @@ class EstadoCuentaRepository:
             unidad_id,
             periodo_full,
         )
-        tasa_row = (
-            self.client.table(self._condo).select("tasa_cambio").eq("id", int(condominio_id)).limit(1).execute()
-        ).data or [{}]
-        tasa = float((tasa_row[0] or {}).get("tasa_cambio") or 0)
+        tasa = float(tasa_cambio or 0)
+        if tasa <= 0:
+            tasa_row = (
+                self.client.table(self._condo)
+                .select("tasa_cambio")
+                .eq("id", int(condominio_id))
+                .limit(1)
+                .execute()
+            ).data or [{}]
+            tasa = float((tasa_row[0] or {}).get("tasa_cambio") or 0)
+        if tasa <= 0:
+            logger.warning(
+                "obtener_datos_unidad_periodo: tasa_cambio es 0 para condominio_id=%s; usando 1.0",
+                condominio_id,
+            )
+            tasa = 1.0
 
         urows = (
             self.client.table(self._uni)

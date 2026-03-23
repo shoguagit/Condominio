@@ -83,6 +83,8 @@ render_breadcrumb("Estados de cuenta masivo")
 
 condominio_id = require_condominio()
 cid = int(condominio_id)
+# Tasa en sesión (sidebar / contexto) tiene prioridad sobre BD para PDF y coherencia
+tasa_para_pdf = float(st.session_state.get("tasa_cambio", 0) or 0)
 
 
 @st.cache_resource
@@ -394,7 +396,9 @@ tasa_cfg = float(config.get("tasa_cambio") or 0)
 
 
 def _fetch_datos(uid: int, condominio_id_: int, per: str):
-    datos, _err = _obtener_datos_para_pdf(uid, condominio_id_, per)
+    datos, _err = _obtener_datos_para_pdf(
+        uid, condominio_id_, per, tasa_cambio=tasa_para_pdf
+    )
     return datos
 
 
@@ -462,7 +466,10 @@ else:
         primera = preview_targets[0]
         with st.spinner("Generando PDF…"):
             datos, err_pdf = _obtener_datos_para_pdf(
-                primera["unidad_id"], cid, periodo_db10
+                primera["unidad_id"],
+                cid,
+                periodo_db10,
+                tasa_cambio=tasa_para_pdf,
             )
             if err_pdf:
                 st.error(
@@ -536,7 +543,10 @@ elif confirmar and puede_enviar and st.button("🚀 Enviar estados de cuenta", t
 
     for i, unidad in enumerate(orden_envio):
         datos, _err_env = _obtener_datos_para_pdf(
-            unidad["unidad_id"], cid, periodo_db10
+            unidad["unidad_id"],
+            cid,
+            periodo_db10,
+            tasa_cambio=tasa_para_pdf,
         )
 
         if not datos:
