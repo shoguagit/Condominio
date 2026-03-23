@@ -437,8 +437,14 @@ if alertas:
 # ═══════════════════════════════════════════════════════════════════════════
 # Logo + vista previa + envío
 # ═══════════════════════════════════════════════════════════════════════════
-logo_b = ec_repo.obtener_logo_bytes(config.get("logo_url"))
-if (config.get("logo_url") or "").strip() and logo_b is None:
+_logo_url_raw = (config.get("logo_url") or "").strip()
+logo_b = ec_repo.obtener_logo_bytes(_logo_url_raw or None)
+# Si falla la preparación en bytes, el PDF aún puede usar la data URL como str
+logo_para_pdf: bytes | str | None = (
+    logo_b if logo_b else (_logo_url_raw if _logo_url_raw.startswith("data:") else None)
+)
+
+if _logo_url_raw and logo_para_pdf is None:
     st.warning(
         "⚠️ Hay **logo_url** en el condominio pero no se pudo preparar para el PDF. "
         "Revise los logs o vuelva a guardar el logo en **Condominios**."
@@ -474,7 +480,7 @@ else:
                     condominio_nombre=config["nombre"],
                     condominio_rif=config["rif"],
                     condominio_email=config["email"],
-                    logo_bytes=logo_b,
+                    logo_bytes=logo_para_pdf,
                     pie_titular=pie_titular,
                     pie_cuerpo=pie_cuerpo,
                     **datos,
@@ -558,7 +564,7 @@ elif confirmar and puede_enviar and st.button("🚀 Enviar estados de cuenta", t
             condominio_nombre=config["nombre"],
             condominio_rif=config["rif"],
             condominio_email=config["email"],
-            logo_bytes=logo_b,
+            logo_bytes=logo_para_pdf,
             pie_titular=pie_titular,
             pie_cuerpo=pie_cuerpo,
             **datos,

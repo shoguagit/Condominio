@@ -26,6 +26,8 @@ from reportlab.platypus import (
 )
 
 AZUL_CONDOMINIO = colors.HexColor("#1B4F8A")
+# RGB del encabezado (sin alpha) para fusionar logos PNG transparentes
+_AZUL_HEADER_RGB = (27, 79, 138)
 AMARILLO_HEADER = colors.HexColor("#FFFACD")
 GRIS_FILA = colors.HexColor("#F5F5F5")
 GRIS_TOTAL = colors.HexColor("#E8E8E8")
@@ -124,20 +126,28 @@ def _logo_bytes_a_image(
                     pil = pil.convert("RGBA")
                 else:
                     pil = pil.convert("RGB")
-            elif pil.mode in ("RGBA", "LA"):
+            elif pil.mode == "LA":
+                pil = pil.convert("RGBA")
+            elif pil.mode in ("RGBA",):
+                pass
+            else:
+                pil = pil.convert("RGB")
+
+            # Fondo azul del encabezado: evita mask='auto' defectuoso o alpha que no se ve en PDF
+            if pil.mode == "RGBA":
+                bg = PILImage.new("RGB", pil.size, _AZUL_HEADER_RGB)
+                bg.paste(pil, mask=pil.split()[3])
+                pil = bg
+            elif pil.mode == "RGB":
                 pass
             else:
                 pil = pil.convert("RGB")
 
             out = io.BytesIO()
-            use_mask = pil.mode in ("RGBA", "LA")
-            pil.save(out, format="PNG")
-            out.seek(0)
-            reader = ImageReader(io.BytesIO(out.getvalue()))
-            if use_mask:
-                img = Image(reader, width=w, height=h, mask="auto")
-            else:
-                img = Image(reader, width=w, height=h)
+            pil.save(out, format="PNG", optimize=True)
+            png_data = out.getvalue()
+            reader = ImageReader(io.BytesIO(png_data))
+            img = Image(reader, width=w, height=h)
             img.hAlign = "LEFT"
             return img
 
@@ -290,7 +300,27 @@ def _generar_estado_cuenta_pdf_impl(
     # —— Encabezado azul ——
     # ~1 pulgada en el encabezado (col_logo ≈ 1.15")
     logo_img = _logo_bytes_a_image(logo_bytes, 2.54, 2.54)
-    logo_cell: Any = logo_img if logo_img is not None else ""
+    # Tabla interna: mejora el layout del Image en celdas con fondo de color
+    if logo_img is not None:
+        logo_cell = Table(
+            [[logo_img]],
+            colWidths=[col_logo],
+            rowHeights=[1.0 * inch],
+        )
+        logo_cell.setStyle(
+            TableStyle(
+                [
+                    ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+                    ("ALIGN", (0, 0), (-1, -1), "LEFT"),
+                    ("LEFTPADDING", (0, 0), (-1, -1), 0),
+                    ("RIGHTPADDING", (0, 0), (-1, -1), 4),
+                    ("TOPPADDING", (0, 0), (-1, -1), 2),
+                    ("BOTTOMPADDING", (0, 0), (-1, -1), 2),
+                ]
+            )
+        )
+    else:
+        logo_cell = ""
 
     hdr_right = (
         f"<b><font color='white' size='12'>{_esc(condominio_nombre)}</font></b><br/>"
