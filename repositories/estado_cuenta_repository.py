@@ -34,6 +34,28 @@ _MESES = (
 )
 
 
+def _variantes_periodo_cuota(periodo: str) -> tuple[str, str, list[str]]:
+    """
+    Normaliza el período para consultar `cuotas_unidad` / movimientos / proceso.
+    En BD el campo `periodo` puede estar como 'YYYY-MM-DD' o solo 'YYYY-MM'.
+    Retorna: (fecha_canónica YYYY-MM-DD, yyyy-mm, lista única para .in_).
+    """
+    s = (periodo or "").strip()
+    if not s:
+        return "", "", []
+    if len(s) >= 10 and s[4] == "-" and s[7] == "-":
+        full = s[:10]
+        ym = full[:7]
+    else:
+        ym = s[:7] if len(s) >= 7 else s[:10]
+        if len(ym) == 7 and ym[4] == "-":
+            full = f"{ym}-01"
+        else:
+            full = s[:10]
+    cand = list(dict.fromkeys([x for x in (full, ym) if x]))
+    return full, ym, cand
+
+
 def periodo_db_a_nombre(periodo_db: str) -> str:
     s = (periodo_db or "")[:10]
     try:
@@ -266,7 +288,13 @@ class EstadoCuentaRepository:
         """
         Datos financieros y de unidad para PDF (USD principal, Bs. referencia en cuota_bs).
         """
-        periodo_db = str(periodo)[:10]
+        periodo_full, periodo_ym, periodo_candidatos = _variantes_periodo_cuota(str(periodo))
+        logger.info(
+            "obtener_datos_unidad_periodo: periodo_recibido=%r unidad_id=%r candidatos=%r",
+            periodo,
+            unidad_id,
+            periodo_candidatos,
+        )
         tasa_row = (
             self.client.table(self._condo).select("tasa_cambio").eq("id", int(condominio_id)).limit(1).execute()
         ).data or [{}]
@@ -288,27 +316,66 @@ class EstadoCuentaRepository:
             p = {}
         cod = (u.get("codigo") or u.get("numero") or "—").strip()
 
+        if not periodo_candidatos:
+            logger.warning("obtener_datos_unidad_periodo: período vacío tras normalizar")
+            return None
+
         crows = (
             self.client.table(self._cuo)
             .select("*")
             .eq("unidad_id", int(unidad_id))
             .eq("condominio_id", int(condominio_id))
-            .eq("periodo", periodo_db)
+            .in_("periodo", periodo_candidatos)
             .limit(1)
             .execute()
         ).data or []
+        logger.info(
+            "obtener_datos_unidad_periodo: fila_cuota_encontrada=%s periodo_en_fila=%r",
+            bool(crows),
+            (crows[0].get("periodo") if crows else None),
+        )
         if not crows:
+            logger.warning(
+                "obtener_datos_unidad_periodo: sin cuota unidad_id=%s condominio_id=%s candidatos=%s",
+                unidad_id,
+                condominio_id,
+                periodo_candidatos,
+            )
+            try:
+                dbg = (
+                    self.client.table(self._cuo)
+                    .select("periodo, unidad_id, cuota_calculada_bs")
+                    .eq("condominio_id", int(condominio_id))
+                    .limit(5)
+                    .execute()
+                )
+                logger.warning(
+                    "obtener_datos_unidad_periodo: muestra cuotas condominio (máx 5): %r",
+                    dbg.data or [],
+                )
+            except Exception as e:
+                logger.warning("obtener_datos_unidad_periodo: consulta debug cuotas falló: %s", e)
             return None
         c = crows[0]
 
         cuota_bs = float(c.get("cuota_calculada_bs") or 0)
+        cuota_usd = monto_bs_a_usd(cuota_bs, tasa)
+        if cuota_usd == 0 and cuota_bs > 0 and tasa > 0:
+            cuota_usd = round(float(cuota_bs) / float(tasa), 2)
+        elif cuota_usd == 0:
+            try:
+                v_bd = float(c.get("cuota_usd") or 0)
+                if v_bd > 0:
+                    cuota_usd = round(v_bd, 2)
+            except (TypeError, ValueError):
+                pass
+
         saldo_ant_bs = float(c.get("saldo_anterior_bs") or 0)
         mora_bs = float(c.get("mora_bs") or 0)
         cobros_bs = float(c.get("cobros_extraordinarios") or 0)
         pagos_bs = float(c.get("pagos_mes_bs") or 0)
         total_pagar_bs = float(c.get("total_a_pagar_bs") or 0)
 
-        cuota_usd = monto_bs_a_usd(cuota_bs, tasa)
         saldo_anterior_usd = monto_bs_a_usd(saldo_ant_bs, tasa)
         mora_usd = monto_bs_a_usd(mora_bs, tasa)
         cobros_ext_usd = monto_bs_a_usd(cobros_bs, tasa)
@@ -319,7 +386,7 @@ class EstadoCuentaRepository:
             self.client.table(self._mov)
             .select("monto_bs, conceptos(nombre)")
             .eq("condominio_id", int(condominio_id))
-            .eq("periodo", periodo_db)
+            .in_("periodo", periodo_candidatos)
             .eq("tipo", "egreso")
             .execute()
         ).data or []
@@ -344,7 +411,7 @@ class EstadoCuentaRepository:
             self.client.table(self._proc)
             .select("fondo_reserva_bs")
             .eq("condominio_id", int(condominio_id))
-            .eq("periodo", periodo_db)
+            .in_("periodo", periodo_candidatos)
             .limit(1)
             .execute()
         ).data or []
@@ -356,12 +423,14 @@ class EstadoCuentaRepository:
             fondo_reserva_usd = round(0.10 * total_comun_usd, 2)
         total_gastos_usd = round(total_comun_usd + fondo_reserva_usd, 2)
 
+        # Comparar contra el límite más largo (YYYY-MM-DD) para .lte coherente con ambos formatos
+        periodo_limite = periodo_full or periodo_ym or periodo_candidatos[0]
         hrows = (
             self.client.table(self._cuo)
             .select("periodo, total_a_pagar_bs")
             .eq("unidad_id", int(unidad_id))
             .eq("condominio_id", int(condominio_id))
-            .lte("periodo", periodo_db)
+            .lte("periodo", periodo_limite)
             .order("periodo", desc=False)
             .execute()
         ).data or []
@@ -382,12 +451,14 @@ class EstadoCuentaRepository:
         ingresos_edificio = pagos_recibidos_usd
         saldo_act_edificio = saldo_actual_usd
 
+        periodo_ref = periodo_full or periodo_ym or str(c.get("periodo") or "")[:10]
+
         return {
             "propietario_nombre": (p.get("nombre") or "—").strip(),
             "propietario_email": (p.get("correo") or p.get("email") or "").strip(),
             "unidad_codigo": cod,
             "indiviso_pct": float(u.get("indiviso_pct") or 0),
-            "periodo_nombre": periodo_db_a_nombre(periodo_db),
+            "periodo_nombre": periodo_db_a_nombre(periodo_ref),
             "tasa_cambio": tasa,
             "cuota_bs": round(cuota_bs, 2),
             "cuota_usd": round(cuota_usd, 2),
@@ -407,7 +478,7 @@ class EstadoCuentaRepository:
             "saldo_act_edificio": round(saldo_act_edificio, 2),
             "total_comun_usd": round(total_comun_usd, 2),
             "emision_str": datetime.now().strftime("%d-%m-%Y"),
-            "mes_corto": _mes_corto_seguro(periodo_db),
+            "mes_corto": _mes_corto_seguro(periodo_ref),
         }
 
 
