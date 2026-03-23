@@ -34,15 +34,20 @@ _MESES = (
 )
 
 
-def _variantes_periodo_cuota(periodo: str) -> tuple[str, str, list[str]]:
+def _normaliza_periodo_sql_date(periodo: str) -> tuple[str, str]:
     """
-    Normaliza el período para consultar `cuotas_unidad` / movimientos / proceso.
-    En BD el campo `periodo` puede estar como 'YYYY-MM-DD' o solo 'YYYY-MM'.
-    Retorna: (fecha_canónica YYYY-MM-DD, yyyy-mm, lista única para .in_).
+    Normaliza el período para columnas PostgreSQL **DATE**.
+
+    Solo se debe filtrar con **YYYY-MM-DD**. Valores como ``2026-03`` provocan
+    ``invalid input syntax for type date`` (22007).
+
+    Retorna:
+        - ``periodo_full``: siempre ``YYYY-MM-DD`` (día 01 si el input era ``YYYY-MM``).
+        - ``periodo_ym``: ``YYYY-MM`` para etiquetas / logs.
     """
     s = (periodo or "").strip()
     if not s:
-        return "", "", []
+        return "", ""
     if len(s) >= 10 and s[4] == "-" and s[7] == "-":
         full = s[:10]
         ym = full[:7]
@@ -52,8 +57,7 @@ def _variantes_periodo_cuota(periodo: str) -> tuple[str, str, list[str]]:
             full = f"{ym}-01"
         else:
             full = s[:10]
-    cand = list(dict.fromkeys([x for x in (full, ym) if x]))
-    return full, ym, cand
+    return full, ym
 
 
 def periodo_db_a_nombre(periodo_db: str) -> str:
@@ -288,12 +292,12 @@ class EstadoCuentaRepository:
         """
         Datos financieros y de unidad para PDF (USD principal, Bs. referencia en cuota_bs).
         """
-        periodo_full, periodo_ym, periodo_candidatos = _variantes_periodo_cuota(str(periodo))
+        periodo_full, periodo_ym = _normaliza_periodo_sql_date(str(periodo))
         logger.info(
-            "obtener_datos_unidad_periodo: periodo_recibido=%r unidad_id=%r candidatos=%r",
+            "obtener_datos_unidad_periodo: periodo_recibido=%r unidad_id=%r periodo_sql_date=%r",
             periodo,
             unidad_id,
-            periodo_candidatos,
+            periodo_full,
         )
         tasa_row = (
             self.client.table(self._condo).select("tasa_cambio").eq("id", int(condominio_id)).limit(1).execute()
@@ -316,7 +320,7 @@ class EstadoCuentaRepository:
             p = {}
         cod = (u.get("codigo") or u.get("numero") or "—").strip()
 
-        if not periodo_candidatos:
+        if not periodo_full:
             logger.warning("obtener_datos_unidad_periodo: período vacío tras normalizar")
             return None
 
@@ -325,7 +329,7 @@ class EstadoCuentaRepository:
             .select("*")
             .eq("unidad_id", int(unidad_id))
             .eq("condominio_id", int(condominio_id))
-            .in_("periodo", periodo_candidatos)
+            .eq("periodo", periodo_full)
             .limit(1)
             .execute()
         ).data or []
@@ -336,10 +340,10 @@ class EstadoCuentaRepository:
         )
         if not crows:
             logger.warning(
-                "obtener_datos_unidad_periodo: sin cuota unidad_id=%s condominio_id=%s candidatos=%s",
+                "obtener_datos_unidad_periodo: sin cuota unidad_id=%s condominio_id=%s periodo_sql=%s",
                 unidad_id,
                 condominio_id,
-                periodo_candidatos,
+                periodo_full,
             )
             try:
                 dbg = (
@@ -386,7 +390,7 @@ class EstadoCuentaRepository:
             self.client.table(self._mov)
             .select("monto_bs, conceptos(nombre)")
             .eq("condominio_id", int(condominio_id))
-            .in_("periodo", periodo_candidatos)
+            .eq("periodo", periodo_full)
             .eq("tipo", "egreso")
             .execute()
         ).data or []
@@ -411,7 +415,7 @@ class EstadoCuentaRepository:
             self.client.table(self._proc)
             .select("fondo_reserva_bs")
             .eq("condominio_id", int(condominio_id))
-            .in_("periodo", periodo_candidatos)
+            .eq("periodo", periodo_full)
             .limit(1)
             .execute()
         ).data or []
@@ -423,14 +427,12 @@ class EstadoCuentaRepository:
             fondo_reserva_usd = round(0.10 * total_comun_usd, 2)
         total_gastos_usd = round(total_comun_usd + fondo_reserva_usd, 2)
 
-        # Comparar contra el límite más largo (YYYY-MM-DD) para .lte coherente con ambos formatos
-        periodo_limite = periodo_full or periodo_ym or periodo_candidatos[0]
         hrows = (
             self.client.table(self._cuo)
             .select("periodo, total_a_pagar_bs")
             .eq("unidad_id", int(unidad_id))
             .eq("condominio_id", int(condominio_id))
-            .lte("periodo", periodo_limite)
+            .lte("periodo", periodo_full)
             .order("periodo", desc=False)
             .execute()
         ).data or []
