@@ -84,7 +84,17 @@ render_breadcrumb("Estados de cuenta masivo")
 condominio_id = require_condominio()
 cid = int(condominio_id)
 # Tasa en sesión (sidebar / contexto) tiene prioridad sobre BD para PDF y coherencia
-tasa_para_pdf = float(st.session_state.get("tasa_cambio", 0) or 0)
+def _tasa_sesion_a_float() -> float:
+    raw = st.session_state.get("tasa_cambio", 0)
+    try:
+        if raw is None or raw == "":
+            return 0.0
+        return float(raw)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+tasa_para_pdf = _tasa_sesion_a_float()
 
 
 @st.cache_resource
@@ -100,13 +110,19 @@ def _obtener_datos_para_pdf(
     unidad_id: int,
     condominio_id_: int,
     periodo_sql: str,
+    tasa_cambio: float = 0.0,
 ) -> tuple[dict | None, str | None]:
     """
     Llama a ``obtener_datos_unidad_periodo`` sin propagar excepciones a Streamlit.
     Retorna ``(datos, None)`` o ``(None, mensaje)`` si falla (p. ej. ``DatabaseError``).
     """
     try:
-        out = ec_repo.obtener_datos_unidad_periodo(unidad_id, condominio_id_, periodo_sql)
+        out = ec_repo.obtener_datos_unidad_periodo(
+            unidad_id,
+            condominio_id_,
+            periodo_sql,
+            tasa_cambio=float(tasa_cambio or 0),
+        )
         return out, None
     except Exception as e:
         _log_ec.warning(
