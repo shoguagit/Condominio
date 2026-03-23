@@ -192,7 +192,6 @@ with col_main:
         except ValueError:
             tipo_default = 0
 
-        def_ind = float(cr.get("indiviso_pct") or 0)
         prop = cr.get("propietarios") or {}
 
         with st.form("form_unidad"):
@@ -208,12 +207,21 @@ with col_main:
                 tipo_unidad = st.selectbox("Tipo *", options=TIPOS_UNIDAD, index=tipo_default)
             with col2:
                 indiviso_pct = st.number_input(
-                    "Indiviso % *",
-                    value=def_ind,
+                    "Indiviso (%) *",
                     min_value=0.0,
                     max_value=100.0,
                     step=0.01,
                     format="%.4f",
+                    value=float(cr.get("indiviso_pct", 0) or 0),
+                    help=(
+                        "Porcentaje de participación según el reglamento. "
+                        "Ejemplo: si la unidad tiene 0.45% → escribir 0.45. "
+                        "La suma de todos los indivisos debe ser exactamente 100."
+                    ),
+                )
+                st.caption(
+                    "💡 Valores típicos: entre 0.30 y 1.50 según el tamaño "
+                    "de la unidad. La suma total del condominio = 100.00"
                 )
                 st.caption(f"Disponible para asignar (resto del condominio): **{disponible:.2f}%**")
 

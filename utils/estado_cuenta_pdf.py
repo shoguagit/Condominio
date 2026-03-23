@@ -5,6 +5,7 @@ No propaga excepciones: ante error devuelve PDF mínimo de aviso.
 
 from __future__ import annotations
 
+import base64
 import io
 from typing import Any
 
@@ -44,6 +45,45 @@ def _fmt_usd(v: float) -> str:
     return f"${float(v):,.2f}"
 
 
+def _logo_bytes_a_image(
+    logo_input: bytes | str | None,
+    ancho: float,
+    alto: float,
+) -> Any:
+    """
+    Convierte logo a Image de ReportLab.
+    Acepta bytes de imagen cruda, data URL (str o bytes utf-8), o None.
+    """
+    if not logo_input:
+        return None
+    try:
+        img_bytes: bytes
+        if isinstance(logo_input, str):
+            data = logo_input.strip()
+            if data.startswith("data:"):
+                if "," not in data:
+                    return None
+                _hdr, b64_data = data.split(",", 1)
+                b64_data = b64_data.strip()
+                pad = (-len(b64_data)) % 4
+                if pad:
+                    b64_data += "=" * pad
+                img_bytes = base64.b64decode(b64_data)
+            else:
+                return None
+        else:
+            raw = logo_input
+            if raw.startswith(b"data:"):
+                s = raw.decode("utf-8", errors="ignore").strip()
+                return _logo_bytes_a_image(s, ancho, alto)
+            img_bytes = raw
+
+        bio = io.BytesIO(img_bytes)
+        return Image(ImageReader(bio), width=ancho, height=alto)
+    except Exception:
+        return None
+
+
 def _pdf_error_bytes(msg: str = "Error al generar el documento") -> bytes:
     buf = io.BytesIO()
     doc = SimpleDocTemplate(
@@ -63,7 +103,7 @@ def generar_estado_cuenta_pdf(
     condominio_nombre: str,
     condominio_rif: str,
     condominio_email: str,
-    logo_bytes: bytes | None,
+    logo_bytes: bytes | str | None,
     pie_titular: str,
     pie_cuerpo: str,
     propietario_nombre: str,
@@ -140,7 +180,7 @@ def _generar_estado_cuenta_pdf_impl(
     condominio_nombre: str,
     condominio_rif: str,
     condominio_email: str,
-    logo_bytes: bytes | None,
+    logo_bytes: bytes | str | None,
     pie_titular: str,
     pie_cuerpo: str,
     propietario_nombre: str,
@@ -177,13 +217,8 @@ def _generar_estado_cuenta_pdf_impl(
     elems: list = []
 
     # —— Encabezado azul ——
-    logo_cell: Any = ""
-    if logo_bytes:
-        try:
-            img = Image(ImageReader(io.BytesIO(logo_bytes)), width=1.0 * inch, height=1.0 * inch)
-            logo_cell = img
-        except Exception:
-            logo_cell = ""
+    logo_img = _logo_bytes_a_image(logo_bytes, 1.0 * inch, 1.0 * inch)
+    logo_cell: Any = logo_img if logo_img is not None else ""
 
     hdr_right = (
         f"<b><font color='white' size='12'>{_esc(condominio_nombre)}</font></b><br/>"

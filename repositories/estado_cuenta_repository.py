@@ -4,9 +4,7 @@ Datos para estados de cuenta PDF masivos (Fase 5-C) y configuración de recibo.
 
 from __future__ import annotations
 
-import base64
 import logging
-import re
 from datetime import datetime
 from typing import Any
 from urllib.request import Request, urlopen
@@ -56,23 +54,18 @@ class EstadoCuentaRepository:
         self._cuo = "cuotas_unidad"
         self._proc = "procesos_mensuales"
 
-    def obtener_logo_bytes(self, logo_url: str | None) -> bytes | None:
+    def obtener_logo_bytes(self, logo_url: str | None) -> str | bytes | None:
         """
-        Descarga logo desde data URL base64 o URL https. Sin excepciones hacia fuera.
+        Para data URL (data:image/...;base64,...) devuelve el string tal cual
+        para que el PDF decodifique con la misma lógica que la UI.
+        Para URL http(s) devuelve bytes descargados.
         """
         if not logo_url or not str(logo_url).strip():
             return None
         s = str(logo_url).strip()
         try:
             if s.startswith("data:"):
-                m = re.match(
-                    r"data:image/(?:png|jpeg|jpg);base64,(.+)",
-                    s,
-                    re.IGNORECASE | re.DOTALL,
-                )
-                if m:
-                    return base64.b64decode(m.group(1).strip())
-                return None
+                return s
             if s.startswith("http://") or s.startswith("https://"):
                 req = Request(s, headers={"User-Agent": "CondominioApp/1.0"})
                 with urlopen(req, timeout=15) as resp:
