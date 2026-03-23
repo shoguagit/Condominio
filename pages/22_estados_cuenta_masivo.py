@@ -5,6 +5,8 @@ Selección por grupos, tesorero con PDF combinado, alertas de coherencia.
 
 from __future__ import annotations
 
+import logging
+
 import pandas as pd
 import streamlit as st
 
@@ -23,6 +25,8 @@ from utils.estado_cuenta_pdf import generar_estado_cuenta_pdf
 from utils.formatters import format_mes_proceso
 from utils.pdf_combinado import combinar_pdfs
 from utils.validators import periodo_to_date_str, validate_periodo, validate_email
+
+_log_ec = logging.getLogger(__name__)
 
 PIE_TITULAR_DEFAULT = (
     "De conformidad con lo aprobado por la Asamblea de propietarios, el recibo de condominio "
@@ -368,7 +372,21 @@ tasa_cfg = float(config.get("tasa_cambio") or 0)
 def _fetch_datos(uid: int, condominio_id_: int, per: str):
     try:
         return ec_repo.obtener_datos_unidad_periodo(uid, condominio_id_, per)
-    except DatabaseError:
+    except DatabaseError as e:
+        _log_ec.warning(
+            "_fetch_datos: DatabaseError unidad_id=%s periodo=%r: %s",
+            uid,
+            per,
+            e,
+        )
+        return None
+    except Exception as e:
+        _log_ec.warning(
+            "_fetch_datos: error unidad_id=%s periodo=%r: %s",
+            uid,
+            per,
+            e,
+        )
         return None
 
 

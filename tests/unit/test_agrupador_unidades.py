@@ -102,3 +102,11 @@ def test_coherencia_ignora_si_no_es_primer_mes():
 
     unidades = [{"unidad_id": 1, "unidad_codigo": "A1", "propietario_nombre": "Z"}]
     assert calcular_alertas_coherencia(unidades, 1, "2026-01-01", fetch) == []
+
+
+def test_coherencia_no_propaga_si_fetch_falla():
+    def fetch(uid: int, cid: int, per: str):
+        raise RuntimeError("simula fallo BD")
+
+    unidades = [{"unidad_id": 1, "unidad_codigo": "A1", "propietario_nombre": "Z"}]
+    assert calcular_alertas_coherencia(unidades, 1, "2026-01-01", fetch) == []

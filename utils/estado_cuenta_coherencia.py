@@ -4,7 +4,10 @@ Alertas de coherencia: saldo acumulado vs cuota del mes (primer mes acumulado).
 
 from __future__ import annotations
 
+import logging
 from typing import Any, Callable
+
+logger = logging.getLogger(__name__)
 
 
 def calcular_alertas_coherencia(
@@ -31,7 +34,17 @@ def calcular_alertas_coherencia(
         uid = u.get("unidad_id")
         if uid is None:
             continue
-        datos = obtener_datos(int(uid), int(condominio_id), periodo)
+        try:
+            datos = obtener_datos(int(uid), int(condominio_id), periodo)
+        except Exception as e:
+            # No bloquear la página por fallos al consultar cuota (auxiliar)
+            logger.warning(
+                "calcular_alertas_coherencia: unidad_id=%s periodo=%r omitida: %s",
+                uid,
+                periodo,
+                e,
+            )
+            continue
         if not datos:
             continue
         if int(datos.get("meses_acumulados") or 0) != 1:
