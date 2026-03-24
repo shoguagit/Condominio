@@ -90,13 +90,15 @@ def label_unidad(u: dict) -> str:
 
 uid_options = {label_unidad(u): int(u["id"]) for u in unidades_list}
 
+tasa = tasa_efectiva()
+if tasa <= 0:
+    st.caption("⚠️ Sin tasa de cambio en sesión ni en condominio: USD en PDFs saldrá en 0.")
+
 
 def _render_saldos_acumulados_iniciales_section() -> None:
     """
-    Fuera de st.tabs: con 7+ pestañas Streamlit suele ejecutar todas en cada rerun;
-    el panel del último tab a veces queda vacío. Esta sección queda siempre visible abajo.
+    Colocada **arriba** de las pestañas para que siempre sea visible (sin desplazar al final).
     """
-    st.divider()
     st.subheader("💰 Saldos acumulados iniciales")
     st.caption(
         "Reporte de saldos históricos cargados como punto "
@@ -153,6 +155,14 @@ def _render_saldos_acumulados_iniciales_section() -> None:
         c3.metric("Total USD", f"${resumen_rep['suma_total_usd']:,.2f}")
 
 
+st.caption(
+    "Debajo: **PDF de saldos iniciales** (histórico). Luego, el resto de reportes por pestañas."
+)
+with st.container(border=True):
+    _render_saldos_acumulados_iniciales_section()
+
+st.divider()
+
 tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs(
     [
         "Estado de cuenta individual",
@@ -164,10 +174,6 @@ tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs(
         "Libro de solventes",
     ]
 )
-
-tasa = tasa_efectiva()
-if tasa <= 0:
-    st.caption("⚠️ Sin tasa de cambio en sesión ni en condominio: USD en PDFs saldrá en 0.")
 
 # --- Tab 1 ---
 with tab1:
@@ -350,5 +356,3 @@ with tab7:
             mime="application/pdf",
             key="dl_sol",
         )
-
-_render_saldos_acumulados_iniciales_section()

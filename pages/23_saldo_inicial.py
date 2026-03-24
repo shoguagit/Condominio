@@ -270,6 +270,9 @@ if archivo:
                         no_encontradas.append(unidad.codigo)
                 except DatabaseError as e:
                     errores_db.append(f"{unidad.codigo}: {e}")
+                except Exception as e:
+                    # Evita tumbar toda la app en Cloud si el tipo de error no coincide con DatabaseError
+                    errores_db.append(f"{unidad.codigo}: {type(e).__name__}: {e}")
 
                 progress.progress((i + 1) / n, text=f"Procesando {unidad.codigo}...")
 

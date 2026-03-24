@@ -25,18 +25,42 @@ def _es_error_columnas_meses_periodo(exc: Exception) -> bool:
         "meses_sin_pagar" in s
         or "primer_periodo" in s
         or "pgrst204" in s
+        or "pgrst" in s
         or "42703" in s
         or ("could not find" in s and "column" in s)
         or ("schema cache" in s and "column" in s)
+        or ("column" in s and "unidades" in s)
     )
 
 
 def _ejecutar_update_unidad(
-    client: Client, tabla: str, unidad_id: int, payload: dict[str, Any]
+    client: Client,
+    tabla: str,
+    unidad_id: int,
+    payload: dict[str, Any],
+    *,
+    retry_sin_meses_si_falla: bool = False,
 ) -> None:
+    """
+    Si ``retry_sin_meses_si_falla`` y el fallo parece por columnas opcionales,
+    reintenta el UPDATE sin ``meses_sin_pagar`` ni ``primer_periodo`` (saldo sí se guarda).
+    """
+    keys_meses = ("meses_sin_pagar", "primer_periodo")
+
+    def _do(p: dict[str, Any]) -> None:
+        client.table(tabla).update(p).eq("id", int(unidad_id)).execute()
+
     try:
-        client.table(tabla).update(payload).eq("id", int(unidad_id)).execute()
+        _do(payload)
     except Exception as e:
+        if retry_sin_meses_si_falla and any(k in payload for k in keys_meses):
+            p2 = {k: v for k, v in payload.items() if k not in keys_meses}
+            if len(p2) < len(payload):
+                try:
+                    _do(p2)
+                    return
+                except Exception as e2:
+                    e = e2
         if _es_error_columnas_meses_periodo(e):
             raise DatabaseError(
                 f"Faltan columnas en la tabla `unidades` para guardar meses/primer período. {_MSG_MIGRACION_6B}"
@@ -81,14 +105,24 @@ class SaldoInicialRepository:
         if not cod:
             return {"encontrada": False, "unidad_id": None, "omitida": False, "solo_metadatos": False}
 
+        cid = int(condominio_id)
         rows = (
             self.client.table(self._tab)
             .select("id, saldo_inicial_bs")
-            .eq("condominio_id", int(condominio_id))
+            .eq("condominio_id", cid)
             .eq("codigo", cod)
             .limit(1)
             .execute()
         ).data or []
+        if not rows:
+            rows = (
+                self.client.table(self._tab)
+                .select("id, saldo_inicial_bs")
+                .eq("condominio_id", cid)
+                .eq("numero", cod)
+                .limit(1)
+                .execute()
+            ).data or []
 
         if not rows:
             return {"encontrada": False, "unidad_id": None, "omitida": False, "solo_metadatos": False}
@@ -104,7 +138,9 @@ class SaldoInicialRepository:
                 "meses_sin_pagar": meses_i,
                 "primer_periodo": pp_norm,
             }
-            _ejecutar_update_unidad(self.client, self._tab, uid, payload_meta)
+            _ejecutar_update_unidad(
+                self.client, self._tab, uid, payload_meta, retry_sin_meses_si_falla=False
+            )
             return {
                 "encontrada": True,
                 "unidad_id": uid,
@@ -133,7 +169,9 @@ class SaldoInicialRepository:
             "primer_periodo": pp_norm,
         }
 
-        _ejecutar_update_unidad(self.client, self._tab, uid, payload)
+        _ejecutar_update_unidad(
+            self.client, self._tab, uid, payload, retry_sin_meses_si_falla=True
+        )
         return {"encontrada": True, "unidad_id": uid, "omitida": False, "solo_metadatos": False}
 
     @safe_db_operation("saldo_inicial.obtener_resumen_saldos")
