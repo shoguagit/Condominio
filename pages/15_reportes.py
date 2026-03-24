@@ -1,11 +1,17 @@
+import re
+from datetime import datetime
+
 import streamlit as st
 
 from config.supabase_client import get_supabase_client
 from repositories.condominio_repository import CondominioRepository
+from repositories.estado_cuenta_repository import EstadoCuentaRepository
 from repositories.reporte_repository import ReporteRepository
+from repositories.reporte_saldos_repository import ReporteSaldosRepository
 from repositories.unidad_repository import UnidadRepository
 from utils.auth import check_authentication, require_condominio
 from utils.error_handler import DatabaseError
+from utils.reporte_saldos_pdf import generar_reporte_saldos_pdf
 from utils.reportes_pdf import (
     pdf_balance_general,
     pdf_estado_cuenta_individual,
@@ -34,10 +40,12 @@ def _repos():
         CondominioRepository(c),
         UnidadRepository(c),
         ReporteRepository(c),
+        ReporteSaldosRepository(c),
+        EstadoCuentaRepository(c),
     )
 
 
-repo_cond, repo_uni, repo_rep = _repos()
+repo_cond, repo_uni, repo_rep, repo_saldos, repo_ec = _repos()
 
 st.markdown("## 📊 Reportes y estados de cuenta")
 
@@ -82,7 +90,7 @@ def label_unidad(u: dict) -> str:
 
 uid_options = {label_unidad(u): int(u["id"]) for u in unidades_list}
 
-tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs(
+tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8 = st.tabs(
     [
         "Estado de cuenta individual",
         "Morosidad",
@@ -91,6 +99,7 @@ tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs(
         "Libro de gastos",
         "Origen y aplicación",
         "Libro de solventes",
+        "Saldos acumulados iniciales",
     ]
 )
 
@@ -279,3 +288,60 @@ with tab7:
             mime="application/pdf",
             key="dl_sol",
         )
+
+# --- Tab 8 — Saldos acumulados iniciales (Fase 6) ---
+with tab8:
+    st.subheader("💰 Saldos acumulados iniciales")
+    st.caption(
+        "Reporte de saldos históricos cargados como punto "
+        "de partida del sistema. Incluye resumen y detalle "
+        "por unidad ordenado por código."
+    )
+
+    if st.button("📄 Generar PDF — Saldos acumulados", key="btn_saldos_pdf"):
+        try:
+            unidades = repo_saldos.obtener_unidades_con_saldo(condominio_id, tasa)
+            if not unidades:
+                st.session_state.pop("saldos_acum_pdf", None)
+                st.session_state.pop("saldos_acum_fn", None)
+                st.warning("No hay saldos iniciales cargados.")
+            else:
+                config = repo_saldos.obtener_config_condominio(condominio_id)
+                logo_b = repo_ec.obtener_logo_bytes(config.get("logo_url"))
+                cn = (config.get("nombre") or condominio.get("nombre") or "condominio").strip()
+                pdf_bytes = generar_reporte_saldos_pdf(
+                    condominio_nombre=cn,
+                    condominio_rif=config.get("rif") or "—",
+                    logo_bytes=logo_b,
+                    tasa_cambio=tasa,
+                    unidades=unidades,
+                    fecha_generacion=datetime.now().strftime("%d/%m/%Y %H:%M"),
+                )
+                fn_safe = re.sub(r"[^\w\-]+", "_", cn)[:60].strip("_") or "condominio"
+                fn = f"saldos_acumulados_{fn_safe}_{datetime.now().strftime('%Y%m%d')}.pdf"
+                st.session_state["saldos_acum_pdf"] = pdf_bytes
+                st.session_state["saldos_acum_fn"] = fn
+                st.success("PDF generado. Usa el botón de descarga.")
+        except DatabaseError as e:
+            st.session_state.pop("saldos_acum_pdf", None)
+            st.session_state.pop("saldos_acum_fn", None)
+            st.error(str(e))
+
+    if st.session_state.get("saldos_acum_pdf"):
+        st.download_button(
+            label="⬇️ Descargar PDF — Saldos acumulados",
+            data=st.session_state["saldos_acum_pdf"],
+            file_name=st.session_state.get("saldos_acum_fn") or "saldos_acumulados.pdf",
+            mime="application/pdf",
+            key="download_saldos_pdf",
+        )
+
+    try:
+        resumen_rep = repo_saldos.obtener_resumen_saldos_reporte(condominio_id, tasa)
+    except DatabaseError:
+        resumen_rep = None
+    if resumen_rep and resumen_rep.get("total_unidades", 0) > 0:
+        c1, c2, c3 = st.columns(3)
+        c1.metric("Unidades", resumen_rep["total_unidades"])
+        c2.metric("Total Bs.", f"Bs. {resumen_rep['suma_total_bs']:,.2f}")
+        c3.metric("Total USD", f"${resumen_rep['suma_total_usd']:,.2f}")

@@ -365,3 +365,22 @@ if resumen and resumen.get("con_saldo_inicial", 0) > 0:
     c4.metric("Total USD", f"${resumen['suma_total_usd']:,.2f}")
 elif resumen is not None:
     st.info("Aún no se han cargado saldos iniciales.")
+
+# ═══════════════════════════════════════
+# ACCESO AL REPORTE PDF (Reportes)
+# ═══════════════════════════════════════
+st.divider()
+col_r1, col_r2 = st.columns([1, 1])
+with col_r1:
+    if st.button(
+        "📊 Ver reporte de saldos acumulados",
+        key="btn_ir_reportes",
+        use_container_width=True,
+    ):
+        st.switch_page("pages/15_reportes.py")
+with col_r2:
+    st.caption(
+        "Genera el PDF con el detalle completo "
+        "de todos los saldos iniciales cargados "
+        "(pestaña **Saldos acumulados iniciales** en Reportes)."
+    )
