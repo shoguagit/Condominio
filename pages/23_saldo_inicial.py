@@ -36,12 +36,11 @@ condominio_id = require_condominio()
 tasa_cambio = float(st.session_state.get("tasa_cambio") or 0)
 
 
-@st.cache_resource
-def _saldo_repo() -> SaldoInicialRepository:
-    return SaldoInicialRepository(get_supabase_client())
-
-
-saldo_repo = _saldo_repo()
+# Sin @st.cache_resource: si solo cambia `saldo_inicial_repository.py`, Streamlit no
+# invalida la caché de `_saldo_repo` y la instancia queda ligada a la clase antigua
+# (p. ej. TypeError: unexpected keyword argument 'meses_sin_pagar'). El cliente
+# Supabase ya es singleton en `get_supabase_client()`.
+saldo_repo = SaldoInicialRepository(get_supabase_client())
 
 st.title("💰 Carga de saldo inicial histórico")
 st.caption(
