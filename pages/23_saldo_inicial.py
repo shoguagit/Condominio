@@ -406,5 +406,5 @@ with col_r2:
     st.caption(
         "Genera el PDF con el detalle completo "
         "de todos los saldos iniciales cargados "
-        "(pestaña **Saldos acumulados iniciales** en Reportes)."
+        "(sección **Saldos acumulados iniciales** al final de la página Reportes)."
     )
