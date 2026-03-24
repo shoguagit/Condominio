@@ -162,10 +162,23 @@ def _build_portada(
         for u in u_ord:
             cod = str(u.get("numero_unidad") or "—").strip() or "—"
             m = int(u.get("meses_sin_pagar") or 0)
-            filas_datos.append([_esc(cod), str(m)])
+            sbs = float(u.get("saldo_inicial_bs") or 0)
+            if tasa > 0:
+                susd = float(u.get("saldo_usd") or 0)
+                usd_txt = f"${susd:,.2f}"
+            else:
+                usd_txt = "N/D"
+            filas_datos.append(
+                [
+                    _esc(cod),
+                    str(m),
+                    f"Bs. {sbs:,.2f}",
+                    usd_txt,
+                ]
+            )
 
-        headers = ["Unidad", "Meses sin pagar"]
-        col_w = [4.8 * inch, 1.5 * inch]
+        headers = ["Unidad", "Meses sin pagar", "Bsf", "USD"]
+        col_w = [2.35 * inch, 0.95 * inch, 1.55 * inch, 1.25 * inch]
         n_chunk = _PORTADA_UNIDADES_FILAS_POR_TABLA
         for off in range(0, len(filas_datos), n_chunk):
             chunk = filas_datos[off : off + n_chunk]
@@ -179,6 +192,7 @@ def _build_portada(
                 ("GRID", (0, 0), (-1, -1), 0.25, colors.grey),
                 ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
                 ("ALIGN", (1, 1), (1, -1), "RIGHT"),
+                ("ALIGN", (2, 1), (3, -1), "RIGHT"),
             ]
             for ri in range(1, len(dist_data)):
                 bg = GRIS if ri % 2 == 0 else BLANCO
