@@ -208,7 +208,8 @@ if archivo:
         st.info(
             f"Se intentará registrar **{len(todas)} saldos** en el condominio **{cn}**.\n\n"
             f"- Carga directa (sin revisión por diferencias)\n"
-            f"- Las unidades que **ya tengan** saldo inicial en el sistema **no se sobrescribirán**"
+            f"- Las unidades que **ya tengan** saldo inicial **no cambiarán el saldo** salvo que "
+            f"marques la opción de forzar (solo actualiza **meses sin pagar** y **primer período**)."
         )
     else:
         st.info(
@@ -224,9 +225,17 @@ if archivo:
         key="confirmar_saldo_inicial",
     )
 
+    forzar_update = st.checkbox(
+        "Actualizar meses y período aunque ya tengan saldo",
+        help="Úsalo para corregir datos de meses sin pagar y primer período en unidades "
+        "que ya tienen saldo inicial cargado. No modifica el monto del saldo.",
+        key="forzar_update_metadatos_saldo",
+    )
+
     if confirmar and todas:
         if st.button("🚀 Registrar saldos iniciales", type="primary", key="btn_registrar_saldos"):
             cargadas = 0
+            meta_actualizadas = 0
             no_encontradas: list[str] = []
             omitidas: list[str] = []
             errores_db: list[str] = []
@@ -242,8 +251,13 @@ if archivo:
                         saldo_bs=unidad.saldo_bs,
                         requiere_revision=unidad.requiere_revision,
                         nota=unidad.nota if unidad.requiere_revision else None,
+                        meses_sin_pagar=int(unidad.meses or 0),
+                        primer_periodo=unidad.primer_periodo,
+                        forzar_update=forzar_update,
                     )
-                    if resultado_reg.get("omitida"):
+                    if resultado_reg.get("solo_metadatos"):
+                        meta_actualizadas += 1
+                    elif resultado_reg.get("omitida"):
                         omitidas.append(unidad.codigo)
                     elif resultado_reg.get("encontrada"):
                         cargadas += 1
@@ -255,7 +269,12 @@ if archivo:
                 progress.progress((i + 1) / n, text=f"Procesando {unidad.codigo}...")
 
             progress.progress(1.0, text="✅ Completado")
-            st.success(f"✅ {cargadas} saldos iniciales registrados")
+            partes = [f"✅ {cargadas} saldos iniciales registrados"]
+            if meta_actualizadas:
+                partes.append(
+                    f"✅ {meta_actualizadas} unidades con meses / primer período actualizados (sin cambiar saldo)"
+                )
+            st.success(" | ".join(partes))
             if omitidas:
                 st.warning(
                     f"⚠️ {len(omitidas)} unidades omitidas porque "

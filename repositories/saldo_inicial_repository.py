@@ -12,6 +12,18 @@ from utils.error_handler import safe_db_operation
 from utils.pdf_generator import monto_bs_a_usd
 
 
+def _normalizar_primer_periodo(val: str | None) -> str | None:
+    if val is None:
+        return None
+    s = str(val).strip()
+    if not s:
+        return None
+    s = s[:7]
+    if len(s) == 7 and s[4] == "-" and s[:4].isdigit() and s[5:].isdigit():
+        return s
+    return None
+
+
 class SaldoInicialRepository:
     def __init__(self, client: Client):
         self.client = client
@@ -26,13 +38,16 @@ class SaldoInicialRepository:
         saldo_bs: float,
         requiere_revision: bool,
         nota: str | None = None,
+        meses_sin_pagar: int = 0,
+        primer_periodo: str | None = None,
+        forzar_update: bool = False,
     ) -> dict[str, Any]:
         """
-        Busca la unidad por código en el condominio y actualiza saldo inicial y saldo actual.
+        Busca la unidad por código y actualiza saldo inicial (o solo metadatos si ``forzar_update``).
         """
         cod = str(codigo_unidad or "").strip()
         if not cod:
-            return {"encontrada": False, "unidad_id": None, "omitida": False}
+            return {"encontrada": False, "unidad_id": None, "omitida": False, "solo_metadatos": False}
 
         rows = (
             self.client.table(self._tab)
@@ -44,16 +59,34 @@ class SaldoInicialRepository:
         ).data or []
 
         if not rows:
-            return {"encontrada": False, "unidad_id": None, "omitida": False}
+            return {"encontrada": False, "unidad_id": None, "omitida": False, "solo_metadatos": False}
 
         row0 = rows[0]
         uid = int(row0["id"])
         saldo_actual = float(row0.get("saldo_inicial_bs") or 0)
+        pp_norm = _normalizar_primer_periodo(primer_periodo)
+        meses_i = int(meses_sin_pagar or 0)
+
+        if saldo_actual > 0 and forzar_update:
+            payload_meta: dict[str, Any] = {
+                "meses_sin_pagar": meses_i,
+                "primer_periodo": pp_norm,
+            }
+            self.client.table(self._tab).update(payload_meta).eq("id", uid).execute()
+            return {
+                "encontrada": True,
+                "unidad_id": uid,
+                "omitida": False,
+                "solo_metadatos": True,
+                "mensaje": "Actualizados solo meses y primer período (saldo sin cambios).",
+            }
+
         if saldo_actual > 0:
             return {
                 "encontrada": True,
                 "unidad_id": uid,
                 "omitida": True,
+                "solo_metadatos": False,
                 "mensaje": f"Ya tiene saldo Bs. {saldo_actual:,.2f}",
             }
 
@@ -64,10 +97,12 @@ class SaldoInicialRepository:
             "saldo": round(float(saldo_bs), 2),
             "requiere_revision": bool(requiere_revision),
             "nota_revision": nota_val,
+            "meses_sin_pagar": meses_i,
+            "primer_periodo": pp_norm,
         }
 
         self.client.table(self._tab).update(payload).eq("id", uid).execute()
-        return {"encontrada": True, "unidad_id": uid, "omitida": False}
+        return {"encontrada": True, "unidad_id": uid, "omitida": False, "solo_metadatos": False}
 
     @safe_db_operation("saldo_inicial.obtener_resumen_saldos")
     def obtener_resumen_saldos(

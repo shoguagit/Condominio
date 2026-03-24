@@ -34,7 +34,8 @@ class ReporteSaldosRepository:
             self.client.table(self._tab_u)
             .select(
                 "id, codigo, numero, indiviso_pct, saldo_inicial_bs, saldo, "
-                "requiere_revision, nota_revision, propietarios(nombre)"
+                "requiere_revision, nota_revision, meses_sin_pagar, primer_periodo, "
+                "propietarios(nombre)"
             )
             .eq("condominio_id", int(condominio_id))
             .eq("activo", True)
@@ -78,6 +79,9 @@ class ReporteSaldosRepository:
             s_ini = float(r.get("saldo_inicial_bs") or 0)
             saldo_usd = monto_bs_a_usd(s_ini, tasa) if tasa > 0 else 0.0
             cod = _codigo_unidad(r)
+            pp = r.get("primer_periodo")
+            if pp is not None:
+                pp = str(pp).strip()[:7] or None
             out.append(
                 {
                     "id": int(r["id"]),
@@ -88,8 +92,8 @@ class ReporteSaldosRepository:
                     "saldo": float(r.get("saldo") or 0),
                     "requiere_revision": bool(r.get("requiere_revision")),
                     "nota_revision": r.get("nota_revision"),
-                    "meses_sin_pagar": 0,
-                    "primer_periodo": None,
+                    "meses_sin_pagar": int(r.get("meses_sin_pagar") or 0),
+                    "primer_periodo": pp,
                     "saldo_usd": saldo_usd,
                 }
             )

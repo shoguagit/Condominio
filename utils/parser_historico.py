@@ -29,6 +29,37 @@ MOR_COL_CUOTA_INI = 3
 MOR_COL_CUOTA_FIN = 29  # inclusive
 MOR_COL_MESES = 30
 
+# Columna Excel (índice 0-based) → primer mes con cuota > 0 (YYYY-MM)
+MAPA_PERIODOS = {
+    3: "2023-12",
+    4: "2024-01",
+    5: "2024-02",
+    6: "2024-03",
+    7: "2024-04",
+    8: "2024-05",
+    9: "2024-06",
+    10: "2024-07",
+    11: "2024-08",
+    12: "2024-09",
+    13: "2024-10",
+    14: "2024-11",
+    15: "2024-12",
+    16: "2025-01",
+    17: "2025-02",
+    18: "2025-03",
+    19: "2025-04",
+    20: "2025-05",
+    21: "2025-06",
+    22: "2025-07",
+    23: "2025-08",
+    24: "2025-09",
+    25: "2025-10",
+    26: "2025-11",
+    27: "2025-12",
+    28: "2026-01",
+    29: "2026-02",
+}
+
 
 @dataclass
 class UnidadHistorico:
@@ -40,6 +71,7 @@ class UnidadHistorico:
     requiere_revision: bool
     nota: str
     meses: int = 0
+    primer_periodo: str | None = None
 
 
 def _fila_a_float(val: Any) -> float | None:
@@ -380,6 +412,8 @@ def parsear_historico_excel(contenido_bytes: bytes) -> dict[str, Any]:
                 diferencia=float(dif_val),
                 requiere_revision=req,
                 nota=nota,
+                meses=0,
+                primer_periodo="2026-02",
             )
             if req:
                 revisar.append(u)
