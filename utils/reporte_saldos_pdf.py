@@ -8,7 +8,6 @@ from __future__ import annotations
 import io
 import logging
 import re
-from collections import defaultdict
 from typing import Any
 
 from reportlab.lib import colors
@@ -36,6 +35,14 @@ BLANCO = colors.white
 NEGRO = colors.black
 
 PERIODO_REFERENCIA = "Febrero 2026"
+
+# Filas por tabla en portada (portrait); evita desbordar una sola tabla muy alta.
+_PORTADA_UNIDADES_FILAS_POR_TABLA = 48
+
+
+def _nk_codigo_unidad(s: str) -> list:
+    s = s or ""
+    return [int(x) if x.isdigit() else x.lower() for x in re.split(r"(\d+)", s)]
 
 
 def _build_portada(
@@ -135,15 +142,10 @@ def _build_portada(
     elems.append(tr)
     elems.append(Spacer(1, 0.25 * inch))
 
-    # Distribución por meses sin pagar (usa meses_sin_pagar efectivo de cada unidad)
-    grupos: dict[int, list[dict]] = defaultdict(list)
-    for u in unidades:
-        m = int(u.get("meses_sin_pagar") or 0)
-        grupos[m].append(u)
-
-    meses_orden = sorted(grupos.keys())
-    elems.append(Paragraph("<b>Distribución por meses de deuda</b>", styles["Heading3"]))
-    if total > 0 and meses_orden == [0]:
+    # Meses de deuda por unidad (una fila por unidad; meses = valor efectivo del reporte)
+    elems.append(Paragraph("<b>Meses de deuda por unidad</b>", styles["Heading3"]))
+    todas_cero = total > 0 and all(int(u.get("meses_sin_pagar") or 0) == 0 for u in unidades)
+    if todas_cero:
         elems.append(
             Paragraph(
                 "Los datos de meses se actualizarán al re-cargar los archivos con "
@@ -151,55 +153,40 @@ def _build_portada(
                 styles["Normal"],
             )
         )
-    else:
-        dist_data: list[list[str]] = [
-            ["Meses sin pagar", "N° unidades", "Subtotal Bs.", "Subtotal USD"],
-        ]
-        sum_u = 0
-        sum_bs = 0.0
-        sum_usd = 0.0
-        for m in meses_orden:
-            lst = grupos[m]
-            n = len(lst)
-            sub_bs = sum(float(x.get("saldo_inicial_bs") or 0) for x in lst)
-            sub_usd = monto_bs_a_usd(sub_bs, tasa) if tasa > 0 else 0.0
-            sum_u += n
-            sum_bs += sub_bs
-            sum_usd += sub_usd
-            label = f"{m} mes{'es' if m != 1 else ''}" if m != 0 else "0 meses (sin registro en BD)"
-            dist_data.append(
-                [
-                    label,
-                    str(n),
-                    f"Bs. {sub_bs:,.2f}",
-                    f"${sub_usd:,.2f}" if tasa > 0 else "N/D",
-                ]
-            )
-        dist_data.append(
-            [
-                "TOTAL",
-                str(sum_u),
-                f"Bs. {sum_bs:,.2f}",
-                f"${sum_usd:,.2f}" if tasa > 0 else "N/D",
-            ]
+    elif total > 0:
+        u_ord = sorted(
+            unidades,
+            key=lambda x: _nk_codigo_unidad(str(x.get("numero_unidad") or "")),
         )
+        filas_datos: list[list[str]] = []
+        for u in u_ord:
+            cod = str(u.get("numero_unidad") or "—").strip() or "—"
+            m = int(u.get("meses_sin_pagar") or 0)
+            filas_datos.append([_esc(cod), str(m)])
 
-        td = Table(dist_data, colWidths=[2.2 * inch, 1.2 * inch, 1.8 * inch, 1.5 * inch])
-        ts_td: list = [
-            ("BACKGROUND", (0, 0), (-1, 0), AZUL),
-            ("TEXTCOLOR", (0, 0), (-1, 0), BLANCO),
-            ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
-            ("FONTSIZE", (0, 0), (-1, -1), 8),
-            ("GRID", (0, 0), (-1, -1), 0.25, colors.grey),
-            ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
-            ("FONTNAME", (0, -1), (-1, -1), "Helvetica-Bold"),
-        ]
-        for ri in range(1, len(dist_data) - 1):
-            bg = GRIS if ri % 2 == 0 else BLANCO
-            ts_td.append(("BACKGROUND", (0, ri), (-1, ri), bg))
-        ts_td.append(("BACKGROUND", (0, -1), (-1, -1), AZUL_CLARO))
-        td.setStyle(TableStyle(ts_td))
-        elems.append(td)
+        headers = ["Unidad", "Meses sin pagar"]
+        col_w = [4.8 * inch, 1.5 * inch]
+        n_chunk = _PORTADA_UNIDADES_FILAS_POR_TABLA
+        for off in range(0, len(filas_datos), n_chunk):
+            chunk = filas_datos[off : off + n_chunk]
+            dist_data = [headers] + chunk
+            td = Table(dist_data, colWidths=col_w, repeatRows=1)
+            ts_td: list = [
+                ("BACKGROUND", (0, 0), (-1, 0), AZUL),
+                ("TEXTCOLOR", (0, 0), (-1, 0), BLANCO),
+                ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+                ("FONTSIZE", (0, 0), (-1, -1), 8),
+                ("GRID", (0, 0), (-1, -1), 0.25, colors.grey),
+                ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+                ("ALIGN", (1, 1), (1, -1), "RIGHT"),
+            ]
+            for ri in range(1, len(dist_data)):
+                bg = GRIS if ri % 2 == 0 else BLANCO
+                ts_td.append(("BACKGROUND", (0, ri), (-1, ri), bg))
+            td.setStyle(TableStyle(ts_td))
+            elems.append(td)
+            if off + n_chunk < len(filas_datos):
+                elems.append(Spacer(1, 0.12 * inch))
 
     buf = io.BytesIO()
     doc = SimpleDocTemplate(
@@ -351,12 +338,9 @@ def generar_reporte_saldos_pdf(
     """
     try:
         u_sorted = list(unidades or [])
-
-        def _nk(s: str) -> list:
-            s = s or ""
-            return [int(x) if x.isdigit() else x.lower() for x in re.split(r"(\d+)", s)]
-
-        u_sorted.sort(key=lambda x: _nk(str(x.get("numero_unidad") or "")))
+        u_sorted.sort(
+            key=lambda x: _nk_codigo_unidad(str(x.get("numero_unidad") or ""))
+        )
 
         p1 = _build_portada(
             condominio_nombre=condominio_nombre,
