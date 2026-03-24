@@ -12,6 +12,28 @@ from utils.error_handler import safe_db_operation
 from utils.pdf_generator import monto_bs_a_usd, rif_condominio_texto
 
 
+def _calcular_meses_desde_primer_periodo(primer_periodo: str | None) -> int:
+    """
+    Meses desde ``primer_periodo`` (YYYY-MM) hasta febrero 2026 (inclusive ambos extremos).
+    Ej.: 2026-01 → 2; 2025-12 → 3; 2023-12 → 27.
+    """
+    if not primer_periodo:
+        return 0
+    try:
+        s = str(primer_periodo).strip()[:7]
+        parts = s.split("-", 1)
+        if len(parts) != 2:
+            return 0
+        año, mes = int(parts[0]), int(parts[1])
+        if not (1 <= mes <= 12):
+            return 0
+        año_fin, mes_fin = 2026, 2
+        meses = (año_fin - año) * 12 + (mes_fin - mes) + 1
+        return max(0, meses)
+    except (ValueError, TypeError):
+        return 0
+
+
 def _propietario_nombre_fila(row: dict) -> str:
     p = row.get("propietarios")
     if isinstance(p, dict) and (p.get("nombre") or "").strip():
@@ -82,6 +104,9 @@ class ReporteSaldosRepository:
             pp = r.get("primer_periodo")
             if pp is not None:
                 pp = str(pp).strip()[:7] or None
+            meses_bd = int(r.get("meses_sin_pagar") or 0)
+            meses_calc = _calcular_meses_desde_primer_periodo(pp)
+            meses_final = meses_bd if meses_bd != 0 else meses_calc
             out.append(
                 {
                     "id": int(r["id"]),
@@ -92,7 +117,8 @@ class ReporteSaldosRepository:
                     "saldo": float(r.get("saldo") or 0),
                     "requiere_revision": bool(r.get("requiere_revision")),
                     "nota_revision": r.get("nota_revision"),
-                    "meses_sin_pagar": int(r.get("meses_sin_pagar") or 0),
+                    "meses_sin_pagar": meses_final,
+                    "meses_calculados": meses_calc,
                     "primer_periodo": pp,
                     "saldo_usd": saldo_usd,
                 }

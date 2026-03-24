@@ -68,6 +68,32 @@ def _ejecutar_update_unidad(
         raise
 
 
+def _actualizar_meses_y_periodo_forzado(
+    client: Client,
+    tabla: str,
+    unidad_id: int,
+    meses_sin_pagar: int,
+    primer_periodo: str | None,
+) -> None:
+    """
+    UPDATE dedicado para ``forzar_update`` (solo meses y primer período).
+    Filtra solo por ``id`` de la unidad (fila ya resuelta por condominio en la búsqueda previa).
+    """
+    uid = int(unidad_id)
+    body: dict[str, Any] = {
+        "meses_sin_pagar": int(meses_sin_pagar),
+        "primer_periodo": primer_periodo,
+    }
+    try:
+        client.table(tabla).update(body).eq("id", uid).execute()
+    except Exception as e:
+        if _es_error_columnas_meses_periodo(e):
+            raise DatabaseError(
+                f"Faltan columnas en la tabla `unidades` para guardar meses/primer período. {_MSG_MIGRACION_6B}"
+            ) from e
+        raise
+
+
 def _normalizar_primer_periodo(val: str | None) -> str | None:
     if val is None:
         return None
@@ -134,12 +160,12 @@ class SaldoInicialRepository:
         meses_i = int(meses_sin_pagar or 0)
 
         if saldo_actual > 0 and forzar_update:
-            payload_meta: dict[str, Any] = {
-                "meses_sin_pagar": meses_i,
-                "primer_periodo": pp_norm,
-            }
-            _ejecutar_update_unidad(
-                self.client, self._tab, uid, payload_meta, retry_sin_meses_si_falla=False
+            _actualizar_meses_y_periodo_forzado(
+                self.client,
+                self._tab,
+                uid,
+                meses_i,
+                pp_norm,
             )
             return {
                 "encontrada": True,

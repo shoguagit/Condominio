@@ -135,62 +135,71 @@ def _build_portada(
     elems.append(tr)
     elems.append(Spacer(1, 0.25 * inch))
 
-    # Distribución por meses sin pagar
+    # Distribución por meses sin pagar (usa meses_sin_pagar efectivo de cada unidad)
     grupos: dict[int, list[dict]] = defaultdict(list)
     for u in unidades:
         m = int(u.get("meses_sin_pagar") or 0)
         grupos[m].append(u)
 
-    dist_data: list[list[str]] = [
-        ["Meses sin pagar", "N° unidades", "Subtotal Bs.", "Subtotal USD"],
-    ]
     meses_orden = sorted(grupos.keys())
-    sum_u = 0
-    sum_bs = 0.0
-    sum_usd = 0.0
-    for m in meses_orden:
-        lst = grupos[m]
-        n = len(lst)
-        sub_bs = sum(float(x.get("saldo_inicial_bs") or 0) for x in lst)
-        sub_usd = monto_bs_a_usd(sub_bs, tasa) if tasa > 0 else 0.0
-        sum_u += n
-        sum_bs += sub_bs
-        sum_usd += sub_usd
-        label = f"{m} mes{'es' if m != 1 else ''}" if m != 0 else "0 meses (sin registro en BD)"
+    elems.append(Paragraph("<b>Distribución por meses de deuda</b>", styles["Heading3"]))
+    if total > 0 and meses_orden == [0]:
+        elems.append(
+            Paragraph(
+                "Los datos de meses se actualizarán al re-cargar los archivos con "
+                "<b>Actualizar meses y período</b>.",
+                styles["Normal"],
+            )
+        )
+    else:
+        dist_data: list[list[str]] = [
+            ["Meses sin pagar", "N° unidades", "Subtotal Bs.", "Subtotal USD"],
+        ]
+        sum_u = 0
+        sum_bs = 0.0
+        sum_usd = 0.0
+        for m in meses_orden:
+            lst = grupos[m]
+            n = len(lst)
+            sub_bs = sum(float(x.get("saldo_inicial_bs") or 0) for x in lst)
+            sub_usd = monto_bs_a_usd(sub_bs, tasa) if tasa > 0 else 0.0
+            sum_u += n
+            sum_bs += sub_bs
+            sum_usd += sub_usd
+            label = f"{m} mes{'es' if m != 1 else ''}" if m != 0 else "0 meses (sin registro en BD)"
+            dist_data.append(
+                [
+                    label,
+                    str(n),
+                    f"Bs. {sub_bs:,.2f}",
+                    f"${sub_usd:,.2f}" if tasa > 0 else "N/D",
+                ]
+            )
         dist_data.append(
             [
-                label,
-                str(n),
-                f"Bs. {sub_bs:,.2f}",
-                f"${sub_usd:,.2f}" if tasa > 0 else "N/D",
+                "TOTAL",
+                str(sum_u),
+                f"Bs. {sum_bs:,.2f}",
+                f"${sum_usd:,.2f}" if tasa > 0 else "N/D",
             ]
         )
-    dist_data.append(
-        [
-            "TOTAL",
-            str(sum_u),
-            f"Bs. {sum_bs:,.2f}",
-            f"${sum_usd:,.2f}" if tasa > 0 else "N/D",
-        ]
-    )
 
-    td = Table(dist_data, colWidths=[2.2 * inch, 1.2 * inch, 1.8 * inch, 1.5 * inch])
-    ts_td: list = [
-        ("BACKGROUND", (0, 0), (-1, 0), AZUL),
-        ("TEXTCOLOR", (0, 0), (-1, 0), BLANCO),
-        ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
-        ("FONTSIZE", (0, 0), (-1, -1), 8),
-        ("GRID", (0, 0), (-1, -1), 0.25, colors.grey),
-        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
-        ("FONTNAME", (0, -1), (-1, -1), "Helvetica-Bold"),
-    ]
-    for ri in range(1, len(dist_data) - 1):
-        bg = GRIS if ri % 2 == 0 else BLANCO
-        ts_td.append(("BACKGROUND", (0, ri), (-1, ri), bg))
-    ts_td.append(("BACKGROUND", (0, -1), (-1, -1), AZUL_CLARO))
-    td.setStyle(TableStyle(ts_td))
-    elems.append(Paragraph("<b>Distribución por meses de deuda</b>", styles["Heading3"]))
-    elems.append(td)
+        td = Table(dist_data, colWidths=[2.2 * inch, 1.2 * inch, 1.8 * inch, 1.5 * inch])
+        ts_td: list = [
+            ("BACKGROUND", (0, 0), (-1, 0), AZUL),
+            ("TEXTCOLOR", (0, 0), (-1, 0), BLANCO),
+            ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+            ("FONTSIZE", (0, 0), (-1, -1), 8),
+            ("GRID", (0, 0), (-1, -1), 0.25, colors.grey),
+            ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+            ("FONTNAME", (0, -1), (-1, -1), "Helvetica-Bold"),
+        ]
+        for ri in range(1, len(dist_data) - 1):
+            bg = GRIS if ri % 2 == 0 else BLANCO
+            ts_td.append(("BACKGROUND", (0, ri), (-1, ri), bg))
+        ts_td.append(("BACKGROUND", (0, -1), (-1, -1), AZUL_CLARO))
+        td.setStyle(TableStyle(ts_td))
+        elems.append(td)
 
     buf = io.BytesIO()
     doc = SimpleDocTemplate(
@@ -220,16 +229,15 @@ def _build_detalle_landscape(
     margin = 0.4 * inch
     avail_w = page_size[0] - 2 * margin
 
+    # landscape letter: N° | Código | Propietario | Alícuota% | Meses | Saldo Bs. | Saldo USD
     cw = [
         0.4 * inch,
-        0.8 * inch,
-        2.5 * inch,
-        0.7 * inch,
-        0.6 * inch,
-        1.0 * inch,
-        1.2 * inch,
         0.9 * inch,
+        3.2 * inch,
         0.8 * inch,
+        0.7 * inch,
+        1.5 * inch,
+        1.1 * inch,
     ]
     scale = avail_w / sum(cw)
     cw = [c * scale for c in cw]
@@ -240,10 +248,8 @@ def _build_detalle_landscape(
         "Propietario",
         "Alícuota %",
         "Meses",
-        "Primer período",
         "Saldo Bs.",
         "Saldo USD",
-        "Estado",
     ]
     tasa = float(tasa_cambio or 0)
 
@@ -255,9 +261,6 @@ def _build_detalle_landscape(
         susd = float(u.get("saldo_usd") or 0) if tasa > 0 else 0.0
         tot_bs += sbs
         tot_usd += susd
-        pp = u.get("primer_periodo")
-        pp_txt = str(pp).strip() if pp else "—"
-        est = "⚠ Revisar" if u.get("requiere_revision") else "✓ OK"
         prop = _esc(str(u.get("propietario_nombre") or "—")[:42])
         data.append(
             [
@@ -266,10 +269,8 @@ def _build_detalle_landscape(
                 Paragraph(prop, sty_small),
                 f"{float(u.get('indiviso_pct') or 0):.2f}",
                 str(int(u.get("meses_sin_pagar") or 0)),
-                _esc(pp_txt),
                 f"Bs. {sbs:,.2f}",
                 f"${susd:,.2f}" if tasa > 0 else "N/D",
-                est,
             ]
         )
 
@@ -280,10 +281,8 @@ def _build_detalle_landscape(
             "",
             "",
             "",
-            "",
             f"Bs. {tot_bs:,.2f}",
             f"${tot_usd:,.2f}" if tasa > 0 else "N/D",
-            "",
         ]
     )
 
