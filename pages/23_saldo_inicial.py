@@ -4,6 +4,15 @@ Fase 6-A — Carga de saldo inicial histórico por unidad (Excel + revisión man
 
 from __future__ import annotations
 
+import sys
+from pathlib import Path
+
+# Streamlit Cloud (y algunos entornos) ejecutan la página con cwd/path distinto;
+# asegurar la raíz del repo en sys.path para `import utils.*`.
+_ROOT = Path(__file__).resolve().parent.parent
+if str(_ROOT) not in sys.path:
+    sys.path.insert(0, str(_ROOT))
+
 import streamlit as st
 import pandas as pd
 
