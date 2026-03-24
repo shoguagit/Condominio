@@ -12,7 +12,11 @@ from config.supabase_client import get_supabase_client
 from repositories.saldo_inicial_repository import SaldoInicialRepository
 from utils.auth import check_authentication, require_condominio
 from utils.error_handler import DatabaseError
-from utils.parser_historico import parsear_historico_excel
+from utils.parser_historico import (
+    detectar_formato_excel,
+    parsear_historico_excel,
+    parsear_morosos_excel,
+)
 from utils.pdf_generator import monto_bs_a_usd
 
 st.set_page_config(page_title="Saldo inicial histórico", page_icon="💰", layout="wide")
@@ -49,15 +53,19 @@ with st.expander("📋 ¿Cómo funciona este módulo?", expanded=False):
         un archivo Excel histórico. El saldo registrado será
         el punto de partida del sistema.
 
-        **Formato del archivo Excel esperado:**
-        - Hoja: `Hoja1`
+        **Formatos aceptados (detección automática):**
+
+        1. **Solventes** — hoja `Hoja1` (historial de pagos):
         - Columna A: Código de unidad (ej: A01, B05)
         - Columna B: Nombre del propietario
         - Columna C: Alícuota (%)
-        - Columna de saldo febrero 2026 (col. AE): Saldo pendiente en Bs.
-        - Columna Diferencias (col. AL): Validación automática
+        - Saldo febrero 2026 (col. AE) y columna Diferencias (col. AL)
 
-        **¿Qué pasa con las unidades marcadas ⚠️?**
+        2. **Morosos acumulados** — hoja `Hoja2`:
+        - Columnas de cuotas mensuales (dic 2023 – feb 2026); el saldo es la **suma** de cuotas &gt; 0
+        - Columna de meses sin pagar; sin columna de diferencias (carga directa)
+
+        **¿Qué pasa con las unidades marcadas ⚠️?** (solo formato solventes)
         Se cargan con el valor del archivo pero quedan
         marcadas para revisión manual. El admin puede
         corregir el saldo desde esta misma pantalla.
@@ -76,8 +84,28 @@ archivo = st.file_uploader(
 )
 
 if archivo:
-    with st.spinner("Analizando archivo..."):
-        resultado = parsear_historico_excel(archivo.read())
+    contenido = archivo.read()
+
+    with st.spinner("Detectando formato del archivo..."):
+        formato = detectar_formato_excel(contenido)
+
+    if formato == "desconocido":
+        st.error(
+            "❌ Formato de archivo no reconocido. "
+            "Se aceptan dos formatos:\n"
+            "- Archivo de solventes (hoja **Hoja1** con columna Diferencias)\n"
+            "- Archivo de morosos acumulados (hoja **Hoja2**)"
+        )
+        st.stop()
+
+    if formato == "solventes":
+        st.info("📋 Formato detectado: **Solventes** (historial de pagos)")
+        with st.spinner("Analizando archivo..."):
+            resultado = parsear_historico_excel(contenido)
+    else:
+        st.info("📋 Formato detectado: **Morosos acumulados** (deuda acumulada sin pagos)")
+        with st.spinner("Analizando archivo..."):
+            resultado = parsear_morosos_excel(contenido)
 
     ok = resultado["ok"]
     revisar = resultado["revisar"]
@@ -96,25 +124,48 @@ if archivo:
 
     st.subheader("✅ Unidades listas para cargar")
     if ok:
-        df_ok = pd.DataFrame(
-            [
-                {
-                    "Código": u.codigo,
-                    "Propietario": u.propietario,
-                    "Alícuota": f"{u.indiviso_pct:.2f}%",
-                    "Saldo Bs.": f"Bs. {u.saldo_bs:,.2f}",
-                    "Saldo USD": (
-                        f"${monto_bs_a_usd(u.saldo_bs, tasa_cambio):,.2f}"
-                        if tasa_cambio > 0
-                        else "N/D"
-                    ),
-                }
-                for u in ok
-            ]
-        )
+        if formato == "morosos":
+            df_ok = pd.DataFrame(
+                [
+                    {
+                        "Código": u.codigo,
+                        "Propietario": u.propietario,
+                        "Alícuota": f"{u.indiviso_pct:.2f}%",
+                        "Meses sin pagar": u.meses,
+                        "Saldo acum. Bs.": f"Bs. {u.saldo_bs:,.2f}",
+                        "Saldo USD": (
+                            f"${monto_bs_a_usd(u.saldo_bs, tasa_cambio):,.2f}"
+                            if tasa_cambio > 0
+                            else "N/D"
+                        ),
+                    }
+                    for u in ok
+                ]
+            )
+        else:
+            df_ok = pd.DataFrame(
+                [
+                    {
+                        "Código": u.codigo,
+                        "Propietario": u.propietario,
+                        "Alícuota": f"{u.indiviso_pct:.2f}%",
+                        "Saldo Bs.": f"Bs. {u.saldo_bs:,.2f}",
+                        "Saldo USD": (
+                            f"${monto_bs_a_usd(u.saldo_bs, tasa_cambio):,.2f}"
+                            if tasa_cambio > 0
+                            else "N/D"
+                        ),
+                    }
+                    for u in ok
+                ]
+            )
         st.dataframe(df_ok, hide_index=True, use_container_width=True)
     else:
-        st.info("No hay filas sin diferencia por encima del umbral.")
+        st.info(
+            "No hay filas listas para cargar."
+            if formato == "morosos"
+            else "No hay filas sin diferencia por encima del umbral."
+        )
 
     if revisar:
         st.subheader("⚠️ Unidades con diferencia — revisar")
@@ -144,12 +195,19 @@ if archivo:
 
     todas = ok + revisar
     cn = st.session_state.get("condominio_nombre") or "—"
-    st.info(
-        f"Se registrarán **{len(todas)} saldos iniciales** "
-        f"en el condominio **{cn}**.\n\n"
-        f"- {len(ok)} unidades se cargarán directamente\n"
-        f"- {len(revisar)} quedarán marcadas para revisión"
-    )
+    if formato == "morosos":
+        st.info(
+            f"Se intentará registrar **{len(todas)} saldos** en el condominio **{cn}**.\n\n"
+            f"- Carga directa (sin revisión por diferencias)\n"
+            f"- Las unidades que **ya tengan** saldo inicial en el sistema **no se sobrescribirán**"
+        )
+    else:
+        st.info(
+            f"Se registrarán **{len(todas)} saldos iniciales** "
+            f"en el condominio **{cn}**.\n\n"
+            f"- {len(ok)} unidades se cargarán directamente\n"
+            f"- {len(revisar)} quedarán marcadas para revisión"
+        )
 
     confirmar = st.checkbox(
         "Confirmo que revisé la previsualización y "
@@ -161,6 +219,7 @@ if archivo:
         if st.button("🚀 Registrar saldos iniciales", type="primary", key="btn_registrar_saldos"):
             cargadas = 0
             no_encontradas: list[str] = []
+            omitidas: list[str] = []
             errores_db: list[str] = []
 
             progress = st.progress(0, text="Cargando...")
@@ -175,7 +234,9 @@ if archivo:
                         requiere_revision=unidad.requiere_revision,
                         nota=unidad.nota if unidad.requiere_revision else None,
                     )
-                    if resultado_reg.get("encontrada"):
+                    if resultado_reg.get("omitida"):
+                        omitidas.append(unidad.codigo)
+                    elif resultado_reg.get("encontrada"):
                         cargadas += 1
                     else:
                         no_encontradas.append(unidad.codigo)
@@ -186,6 +247,12 @@ if archivo:
 
             progress.progress(1.0, text="✅ Completado")
             st.success(f"✅ {cargadas} saldos iniciales registrados")
+            if omitidas:
+                st.warning(
+                    f"⚠️ {len(omitidas)} unidades omitidas porque "
+                    f"ya tenían saldo inicial cargado: "
+                    f"{', '.join(omitidas)}"
+                )
             if no_encontradas:
                 st.warning(
                     f"⚠️ {len(no_encontradas)} unidades no "

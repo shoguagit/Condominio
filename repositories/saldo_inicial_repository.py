@@ -32,11 +32,11 @@ class SaldoInicialRepository:
         """
         cod = str(codigo_unidad or "").strip()
         if not cod:
-            return {"encontrada": False, "unidad_id": None}
+            return {"encontrada": False, "unidad_id": None, "omitida": False}
 
         rows = (
             self.client.table(self._tab)
-            .select("id")
+            .select("id, saldo_inicial_bs")
             .eq("condominio_id", int(condominio_id))
             .eq("codigo", cod)
             .limit(1)
@@ -44,9 +44,19 @@ class SaldoInicialRepository:
         ).data or []
 
         if not rows:
-            return {"encontrada": False, "unidad_id": None}
+            return {"encontrada": False, "unidad_id": None, "omitida": False}
 
-        uid = int(rows[0]["id"])
+        row0 = rows[0]
+        uid = int(row0["id"])
+        saldo_actual = float(row0.get("saldo_inicial_bs") or 0)
+        if saldo_actual > 0:
+            return {
+                "encontrada": True,
+                "unidad_id": uid,
+                "omitida": True,
+                "mensaje": f"Ya tiene saldo Bs. {saldo_actual:,.2f}",
+            }
+
         nota_val = (nota or "").strip() if requiere_revision else None
 
         payload: dict[str, Any] = {
@@ -57,7 +67,7 @@ class SaldoInicialRepository:
         }
 
         self.client.table(self._tab).update(payload).eq("id", uid).execute()
-        return {"encontrada": True, "unidad_id": uid}
+        return {"encontrada": True, "unidad_id": uid, "omitida": False}
 
     @safe_db_operation("saldo_inicial.obtener_resumen_saldos")
     def obtener_resumen_saldos(
