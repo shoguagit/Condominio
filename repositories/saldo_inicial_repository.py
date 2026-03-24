@@ -8,8 +8,40 @@ from typing import Any
 
 from supabase import Client
 
-from utils.error_handler import safe_db_operation
+from utils.error_handler import DatabaseError, safe_db_operation
 from utils.pdf_generator import monto_bs_a_usd
+
+_MSG_MIGRACION_6B = (
+    "Ejecute en Supabase (SQL Editor) el script **scripts/fase6a_saldo_inicial_migration.sql** "
+    "completo (incluye columnas `meses_sin_pagar` y `primer_periodo`) "
+    "o **scripts/fase6b_meses_sin_pagar_migration.sql**. "
+    "Luego, en Supabase: **Settings → API → Reload schema** si el error menciona el caché de esquema."
+)
+
+
+def _es_error_columnas_meses_periodo(exc: Exception) -> bool:
+    s = str(exc).lower()
+    return (
+        "meses_sin_pagar" in s
+        or "primer_periodo" in s
+        or "pgrst204" in s
+        or "42703" in s
+        or ("could not find" in s and "column" in s)
+        or ("schema cache" in s and "column" in s)
+    )
+
+
+def _ejecutar_update_unidad(
+    client: Client, tabla: str, unidad_id: int, payload: dict[str, Any]
+) -> None:
+    try:
+        client.table(tabla).update(payload).eq("id", int(unidad_id)).execute()
+    except Exception as e:
+        if _es_error_columnas_meses_periodo(e):
+            raise DatabaseError(
+                f"Faltan columnas en la tabla `unidades` para guardar meses/primer período. {_MSG_MIGRACION_6B}"
+            ) from e
+        raise
 
 
 def _normalizar_primer_periodo(val: str | None) -> str | None:
@@ -72,7 +104,7 @@ class SaldoInicialRepository:
                 "meses_sin_pagar": meses_i,
                 "primer_periodo": pp_norm,
             }
-            self.client.table(self._tab).update(payload_meta).eq("id", uid).execute()
+            _ejecutar_update_unidad(self.client, self._tab, uid, payload_meta)
             return {
                 "encontrada": True,
                 "unidad_id": uid,
@@ -101,7 +133,7 @@ class SaldoInicialRepository:
             "primer_periodo": pp_norm,
         }
 
-        self.client.table(self._tab).update(payload).eq("id", uid).execute()
+        _ejecutar_update_unidad(self.client, self._tab, uid, payload)
         return {"encontrada": True, "unidad_id": uid, "omitida": False, "solo_metadatos": False}
 
     @safe_db_operation("saldo_inicial.obtener_resumen_saldos")

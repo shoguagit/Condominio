@@ -231,6 +231,11 @@ if archivo:
         "que ya tienen saldo inicial cargado. No modifica el monto del saldo.",
         key="forzar_update_metadatos_saldo",
     )
+    st.caption(
+        "Si falla el guardado por columnas faltantes, ejecuta en Supabase el SQL de "
+        "**scripts/fase6a_saldo_inicial_migration.sql** (bloque final 6-B) o "
+        "**scripts/fase6b_meses_sin_pagar_migration.sql**."
+    )
 
     if confirmar and todas:
         if st.button("🚀 Registrar saldos iniciales", type="primary", key="btn_registrar_saldos"):
