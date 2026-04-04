@@ -62,12 +62,13 @@ with col_help:
         ],
     )
     if records:
-        gastos   = sum(1 for r in records if r.get("tipo") == "gasto"   and r.get("activo"))
+        gastos = sum(1 for r in records if r.get("tipo") == "gasto" and r.get("activo"))
+        ajustes = sum(1 for r in records if r.get("tipo") == "ajuste" and r.get("activo"))
         st.markdown(
             f"<div style='background:#EBF5FB;border-radius:8px;padding:10px 12px;"
             f"font-size:12px;color:#2C3E50;margin-top:8px;'>"
             f"💸 Gastos activos: <b>{gastos}</b><br>"
-            f"🛠️ Ajustes activos: <b>{sum(1 for r in records if r.get(\"tipo\") == \"ajuste\" and r.get(\"activo\"))}</b></div>",
+            f"🛠️ Ajustes activos: <b>{ajustes}</b></div>",
             unsafe_allow_html=True,
         )
 
@@ -181,7 +182,7 @@ with col_main:
                         can_del = repo.can_delete(current_rec["id"], condominio_id)
                         if not can_del:
                             st.error("No se puede eliminar un concepto si ya fue usado en movimientos del período activo.")
-                            return
+                            st.stop()
                         repo.delete(current_rec["id"])
                         st.success("✅ Concepto eliminado.")
                         st.session_state.conc_modo    = None
