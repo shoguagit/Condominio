@@ -619,12 +619,32 @@ with tab_carga:
                             st.session_state.upload_step = 3
                             st.rerun()
                         except DatabaseError as err:
-                            st.session_state["_import_last_error"] = str(err)
-                            st.error(f"❌ {err}")
+                            err_s = str(err)
+                            if (
+                                "row-level security" in err_s.lower()
+                                or "42501" in err_s
+                            ):
+                                err_s = (
+                                    f"{err_s}\n\n**Qué hacer:** En Supabase → **SQL Editor**, "
+                                    "ejecute el script **`scripts/fase4d_movimientos_rls_migration.sql`** "
+                                    "del repositorio (políticas RLS para `movimientos`). "
+                                    "Después, si aplica: **Settings → API → Reload schema**."
+                                )
+                            st.session_state["_import_last_error"] = err_s
+                            st.error(f"❌ {err_s}")
                             st.rerun()
                         except Exception as err:
-                            st.session_state["_import_last_error"] = str(err)
-                            st.error(f"❌ Error al importar: {err}")
+                            err_s = str(err)
+                            if (
+                                "row-level security" in err_s.lower()
+                                or "42501" in err_s
+                            ):
+                                err_s = (
+                                    f"{err_s}\n\n**Qué hacer:** En Supabase → **SQL Editor**, "
+                                    "ejecute **`scripts/fase4d_movimientos_rls_migration.sql`**."
+                                )
+                            st.session_state["_import_last_error"] = err_s
+                            st.error(f"❌ Error al importar: {err_s}")
                             st.rerun()
 
         elif step == 3:
