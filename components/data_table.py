@@ -124,16 +124,17 @@ def render_data_table(
         )
         return None
 
-    # ── Construir DataFrame de visualización ─────────────────────────────────
+    # ── Construir DataFrame de visualización + índice global en `data` ───────
     rows = []
-    original_indices = []
-    for row in page_data:
+    row_global_indices: list[int] = []
+    for offset, row in enumerate(page_data):
+        gi = start + offset
         display_row = {}
         for col, cfg in visible_cols.items():
             raw = row.get(col)
             display_row[cfg.get("label", col)] = _format_value(raw, cfg.get("format"))
         rows.append(display_row)
-        original_indices.append(data.index(row) if row in data else None)
+        row_global_indices.append(gi)
 
     df = pd.DataFrame(rows)
 
@@ -144,26 +145,59 @@ def render_data_table(
         if "width" in cfg:
             col_cfg[label] = st.column_config.TextColumn(label, width=cfg["width"])
 
-    # ── Tabla sólo visual (sin selección interna) ─────────────────────────────
-    st.dataframe(
-        df,
-        column_config=col_cfg if col_cfg else None,
-        use_container_width=True,
-        height=height,
-        hide_index=True,
-        key=f"df_{key}",
-    )
-
-    # ── Selección múltiple (checkbox conceptual) ─────────────────────────────
-    # Para futuras acciones masivas: almacenamos índices seleccionados en sesión.
-    sel_key = f"dt_selected_{key}"
-    if sel_key not in st.session_state:
-        st.session_state[sel_key] = set()
-
-    # Seleccionamos el índice de la primera fila de la página como seleccionado actual
+    # ── Tabla con selección de fila (índice respecto a la lista `data` pasada) ─
+    df_widget_key = f"df_sel_{key}"
     selected_original_idx: int | None = None
-    if original_indices:
-        selected_original_idx = original_indices[0]
+    df_event = None
+    try:
+        df_event = st.dataframe(
+            df,
+            column_config=col_cfg if col_cfg else None,
+            use_container_width=True,
+            height=height,
+            hide_index=True,
+            key=df_widget_key,
+            on_select="rerun",
+            selection_mode="single-row",
+        )
+    except (TypeError, ValueError):
+        st.dataframe(
+            df,
+            column_config=col_cfg if col_cfg else None,
+            use_container_width=True,
+            height=height,
+            hide_index=True,
+            key=f"df_legacy_{key}",
+        )
+        if row_global_indices:
+            pick = st.radio(
+                "Fila activa (página actual)",
+                options=list(range(len(row_global_indices))),
+                format_func=lambda i: " | ".join(
+                    str(x) for x in df.iloc[i].tolist()[:4]
+                )[:120],
+                key=f"dt_fallback_pick_{key}_p{current_page}",
+            )
+            gix_fb = row_global_indices[int(pick)]
+            if 0 <= gix_fb < len(data):
+                selected_original_idx = gix_fb
+
+    if df_event is not None:
+        sel = getattr(df_event, "selection", None)
+        row_tuple: tuple = ()
+        if sel is not None:
+            row_tuple = tuple(getattr(sel, "rows", ()) or ())
+        if row_tuple and row_global_indices:
+            li = int(row_tuple[0])
+            if 0 <= li < len(row_global_indices):
+                gix = row_global_indices[li]
+                if 0 <= gix < len(data):
+                    selected_original_idx = gix
+
+    st.caption(
+        "💡 **Seleccione la fila** con la casilla a la izquierda; "
+        "ese registro será el activo para Modificar / Eliminar (y la barra ◀ ▶)."
+    )
 
     # ── Paginación simplificada ──────────────────────────────────────────────
     if total_pages > 1:

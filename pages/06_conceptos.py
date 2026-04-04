@@ -73,20 +73,17 @@ with col_help:
         )
 
 with col_main:
-    col_tb, col_filtro = st.columns([3, 1])
-    with col_tb:
-        render_toolbar(
-            key="conceptos",
-            total=len(records),
-            on_incluir  = lambda: st.session_state.update({"conc_modo": "incluir"}),
-            on_modificar= lambda: st.session_state.update({"conc_modo": "modificar"}),
-            on_eliminar = lambda: st.session_state.update({"conc_modo": "eliminar"}),
-        )
+    # Filtro antes de la toolbar: total e índices deben referirse a `filtered`, no a `records`.
+    col_filtro, col_tb = st.columns([1, 3])
     with col_filtro:
-        filtro_tipo = st.selectbox("Filtrar por tipo:", ["Todos", "Gasto", "Ajuste"],
-                                   key="conc_filtro", label_visibility="collapsed")
+        filtro_tipo = st.selectbox(
+            "Filtrar por tipo:",
+            ["Todos", "Gasto", "Ajuste"],
+            key="conc_filtro",
+            label_visibility="collapsed",
+        )
 
-    filtered = records
+    filtered = list(records)
     if filtro_tipo == "Gasto":
         filtered = [r for r in records if r.get("tipo") == "gasto"]
     elif filtro_tipo == "Ajuste":
@@ -94,6 +91,15 @@ with col_main:
 
     for r in filtered:
         r["_tipo_label"] = TIPOS.get(r.get("tipo", ""), r.get("tipo", ""))
+
+    with col_tb:
+        render_toolbar(
+            key="conceptos",
+            total=len(filtered),
+            on_incluir=lambda: st.session_state.update({"conc_modo": "incluir"}),
+            on_modificar=lambda: st.session_state.update({"conc_modo": "modificar"}),
+            on_eliminar=lambda: st.session_state.update({"conc_modo": "eliminar"}),
+        )
 
     sel_idx = render_data_table(
         data=filtered,
@@ -113,7 +119,11 @@ with col_main:
 
     check_close_detail("conceptos")
     idx = get_current_index("conceptos")
-    current_rec = records[idx] if records and 0 <= idx < len(records) else None
+    current_rec = (
+        filtered[idx]
+        if filtered and 0 <= idx < len(filtered)
+        else None
+    )
     modo        = st.session_state.conc_modo
 
     if modo in ("incluir", "modificar"):
@@ -174,7 +184,11 @@ with col_main:
             st.warning("⚠️ Seleccione un concepto.")
             st.session_state.conc_modo = None
         else:
-            st.warning(f"⚠️ ¿Eliminar el concepto **{current_rec.get('nombre')}**?")
+            cid_del = current_rec.get("id")
+            st.warning(
+                f"⚠️ ¿Eliminar el concepto **{current_rec.get('nombre')}** "
+                f"(id **{cid_del}**)? Revise que coincida con la fila marcada en la tabla."
+            )
             col_y, col_n = st.columns(2)
             with col_y:
                 if st.button("✅ Sí, eliminar", type="primary", use_container_width=True, key="conc_del_y"):
