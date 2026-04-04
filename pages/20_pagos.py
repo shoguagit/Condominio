@@ -28,21 +28,16 @@ render_breadcrumb("Pagos y Cobros")
 condominio_id = require_condominio()
 
 
-@st.cache_resource
-def get_repos():
-    client = get_supabase_client()
-    return (
-        PagoRepository(client),
-        UnidadRepository(client),
-        CondominioRepository(client),
-        PresupuestoRepository(client),
-        ProcesoMensualRepository(client),
-        MoraRepository(client),
-        CobroExtraordinarioRepository(client),
-    )
-
-
-repo_pago, repo_uni, repo_cond, repo_pres, repo_proc, repo_mora, repo_cobro_ext = get_repos()
+# Sin @st.cache_resource: si solo cambia un repository, Streamlit no invalida la caché
+# de get_repos y la instancia queda ligada a la clase antigua (p. ej. AttributeError: no 'delete').
+_client_pg = get_supabase_client()
+repo_pago = PagoRepository(_client_pg)
+repo_uni = UnidadRepository(_client_pg)
+repo_cond = CondominioRepository(_client_pg)
+repo_pres = PresupuestoRepository(_client_pg)
+repo_proc = ProcesoMensualRepository(_client_pg)
+repo_mora = MoraRepository(_client_pg)
+repo_cobro_ext = CobroExtraordinarioRepository(_client_pg)
 
 st.markdown("## 💳 Pagos y cobros")
 
