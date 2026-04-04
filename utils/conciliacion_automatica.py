@@ -1,0 +1,131 @@
+"""Orquestación: movimiento bancario → pago(s) por cédula en descripción."""
+
+from __future__ import annotations
+
+from config.supabase_client import get_supabase_client
+from repositories.conciliacion_cedula_repository import ConciliacionCedulaRepository
+from utils.cedula_extractor import clasificar_pago, extraer_cedulas
+from utils.sincronizar_estado_pago_unidad import sincronizar_estado_pago_unidad
+from utils.supabase_compat import json_safe_periodo
+
+
+def _periodo_fecha_db(periodo: str) -> str:
+    s = (periodo or "").strip()
+    if len(s) == 7 and s[4] == "-":
+        return f"{s}-01"
+    return json_safe_periodo(s)[:10]
+
+
+def procesar_conciliacion_automatica(
+    movimiento: dict,
+    condominio_id: int,
+    periodo: str,
+    tasa_cambio: float,
+) -> dict:
+    """
+    Proceso completo para un movimiento bancario.
+    NUNCA propaga excepciones.
+    """
+    vacio = {
+        "procesado": False,
+        "cedulas_encontradas": [],
+        "unidades_vinculadas": [],
+        "pagos_registrados": 0,
+        "tipo_pago": "",
+        "motivo_omision": None,
+    }
+    try:
+        if not movimiento.get("es_ingreso"):
+            return {
+                **vacio,
+                "motivo_omision": "no_es_ingreso",
+            }
+
+        mid = movimiento.get("id")
+        if mid is None:
+            return {**vacio, "motivo_omision": "sin_id_movimiento"}
+
+        client = get_supabase_client()
+        repo = ConciliacionCedulaRepository(client)
+
+        if repo.movimiento_ya_conciliado(int(mid)):
+            return {
+                **vacio,
+                "motivo_omision": "ya_conciliado",
+                "procesado": False,
+            }
+
+        texto = movimiento.get("descripcion") or movimiento.get("concepto") or ""
+        cedulas = extraer_cedulas(str(texto))
+        if not cedulas:
+            return {
+                **vacio,
+                "cedulas_encontradas": [],
+                "motivo_omision": "sin_cedula",
+            }
+
+        unidades = repo.buscar_unidades_por_cedula(cedulas, int(condominio_id))
+        if not unidades:
+            return {
+                **vacio,
+                "cedulas_encontradas": cedulas,
+                "motivo_omision": "sin_coincidencia",
+            }
+
+        periodo_db = _periodo_fecha_db(periodo)
+        monto_bs = float(movimiento.get("monto_bs") or 0)
+        fecha_pago = str(movimiento.get("fecha") or "")[:10]
+        referencia = str(movimiento.get("referencia") or "").strip()
+
+        pagos_nuevos = 0
+        first_pago_id: int | None = None
+        last_tipo = "total"
+        unidades_limpias: list[dict] = []
+
+        for u in unidades:
+            uid = int(u["unidad_id"])
+            cuota = repo.obtener_cuota_unidad(uid, periodo_db)
+            tipo = clasificar_pago(monto_bs, cuota)
+            last_tipo = tipo
+            u_out = {k: v for k, v in u.items() if not str(k).startswith("_")}
+            u_out["cuota_bs"] = cuota
+            unidades_limpias.append(u_out)
+
+            p = repo.registrar_pago_automatico(
+                condominio_id=int(condominio_id),
+                unidad_id=uid,
+                periodo=periodo_db,
+                monto_bs=monto_bs,
+                fecha_pago=fecha_pago,
+                referencia=referencia,
+                movimiento_id=int(mid),
+                tipo_pago=tipo,
+                tasa_cambio=float(tasa_cambio or 0),
+                propietario_id=u.get("propietario_id"),
+            )
+            es_dup = bool(p.pop("_es_reutilizado", False))
+            if not es_dup:
+                pagos_nuevos += 1
+                sincronizar_estado_pago_unidad(
+                    client, int(condominio_id), uid, periodo_db
+                )
+            pid = int(p.get("id") or 0)
+            if pid and first_pago_id is None:
+                first_pago_id = pid
+
+        if first_pago_id is not None and pagos_nuevos > 0:
+            repo.marcar_movimiento_conciliado(int(mid), first_pago_id)
+
+        return {
+            "procesado": pagos_nuevos > 0,
+            "cedulas_encontradas": cedulas,
+            "unidades_vinculadas": unidades_limpias,
+            "pagos_registrados": pagos_nuevos,
+            "tipo_pago": last_tipo,
+            "motivo_omision": None if pagos_nuevos > 0 else "sin_pago_nuevo",
+        }
+    except Exception:
+        return {
+            **vacio,
+            "motivo_omision": "error_interno",
+        }

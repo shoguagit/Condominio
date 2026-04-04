@@ -10,11 +10,15 @@ from repositories.concepto_repository import ConceptoRepository
 from repositories.unidad_repository import UnidadRepository
 from repositories.propietario_repository import PropietarioRepository
 from repositories.conciliacion_repository import ConciliacionRepository
+from repositories.conciliacion_cedula_repository import ConciliacionCedulaRepository
+from repositories.condominio_repository import CondominioRepository
 from components.header import render_header
 from components.breadcrumb import render_breadcrumb
 from utils.auth import check_authentication, require_condominio
 from utils.bank_parser import MovimientoParsed, es_duplicado, parsear_bytes
 from utils.conciliacion import clasificar_alerta
+from utils.conciliacion_automatica import procesar_conciliacion_automatica
+from utils.cedula_extractor import extraer_cedulas
 from utils.error_handler import DatabaseError
 from utils.supabase_compat import json_safe_date, json_safe_periodo
 from utils.validators import validate_periodo, periodo_to_date_str
@@ -80,6 +84,18 @@ render_breadcrumb("Movimientos Bancarios")
 condominio_id = require_condominio()
 
 
+def _tasa_import_mov() -> float:
+    """Prioriza tasa en sesión; si no hay, usa la del condominio."""
+    ts = float(st.session_state.get("tasa_cambio") or 0)
+    if ts > 0:
+        return ts
+    try:
+        c = CondominioRepository(get_supabase_client()).get_by_id(condominio_id)
+        return float(c.get("tasa_cambio") or 0) if c else 0.0
+    except Exception:
+        return 0.0
+
+
 @st.cache_resource
 def get_repos():
     client = get_supabase_client()
@@ -89,10 +105,13 @@ def get_repos():
         UnidadRepository(client),
         PropietarioRepository(client),
         ConciliacionRepository(client),
+        ConciliacionCedulaRepository(client),
     )
 
 
-repo_mov, repo_concepto, repo_uni, repo_prop, repo_conciliacion = get_repos()
+repo_mov, repo_concepto, repo_uni, repo_prop, repo_conciliacion, repo_conc_ced = (
+    get_repos()
+)
 
 st.markdown("## 🏦 Movimientos Bancarios")
 
@@ -355,12 +374,14 @@ with tab_carga:
         def _importar_movimientos_parsed(
             movs: list[MovimientoParsed],
             periodo_import_db: str,
-        ) -> tuple[int, int]:
-            """Retorna (insertados, omitidos_por_duplicado). periodo_import_db: YYYY-MM-01."""
+        ) -> tuple[int, int, int]:
+            """Retorna (insertados, omitidos_por_duplicado, pagos_auto_cedula)."""
             inserted = 0
             skipped = 0
+            conciliados_auto = 0
             cid = int(condominio_id)
             periodo_ym_imp = periodo_import_db[:7]
+            tasa_cambio = _tasa_import_mov()
             try:
                 raw_ex = repo_mov.get_all(condominio_id, periodo_import_db)
             except DatabaseError:
@@ -397,30 +418,47 @@ with tab_carga:
                     }
                 )
                 if m.es_ingreso:
-                    try:
-                        sug = repo_conciliacion.sugerir_vinculacion(
-                            int(created["id"]),
-                            condominio_id,
-                            periodo_import_db,
-                        )
-                        ms = (
-                            float(sug["pago"]["monto_bs"])
-                            if sug and sug.get("pago")
-                            else 0.0
-                        )
-                        tipo_a = clasificar_alerta(
-                            float(created.get("monto_bs") or 0),
-                            ms,
-                            m.fecha,
-                            periodo_ym_imp,
-                        )
-                        repo_mov.update(
-                            int(created["id"]),
-                            {"tipo_alerta": tipo_a},
-                        )
-                    except DatabaseError:
-                        pass
-            return inserted, skipped
+                    movimiento_dict = {
+                        "id": int(created["id"]),
+                        "descripcion": m.concepto,
+                        "monto_bs": float(m.monto),
+                        "es_ingreso": True,
+                        "referencia": m.referencia,
+                        "fecha": str(m.fecha),
+                    }
+                    resultado_conc = procesar_conciliacion_automatica(
+                        movimiento=movimiento_dict,
+                        condominio_id=cid,
+                        periodo=periodo_import_db[:7],
+                        tasa_cambio=tasa_cambio,
+                    )
+                    if resultado_conc.get("pagos_registrados", 0) > 0:
+                        conciliados_auto += resultado_conc["pagos_registrados"]
+                    if not resultado_conc.get("procesado"):
+                        try:
+                            sug = repo_conciliacion.sugerir_vinculacion(
+                                int(created["id"]),
+                                condominio_id,
+                                periodo_import_db,
+                            )
+                            ms = (
+                                float(sug["pago"]["monto_bs"])
+                                if sug and sug.get("pago")
+                                else 0.0
+                            )
+                            tipo_a = clasificar_alerta(
+                                float(created.get("monto_bs") or 0),
+                                ms,
+                                m.fecha,
+                                periodo_ym_imp,
+                            )
+                            repo_mov.update(
+                                int(created["id"]),
+                                {"tipo_alerta": tipo_a},
+                            )
+                        except DatabaseError:
+                            pass
+            return inserted, skipped, conciliados_auto
 
         step = st.session_state.upload_step
 
@@ -600,7 +638,7 @@ with tab_carga:
                                 "Importando movimientos en la base de datos… "
                                 "No cierres esta pestaña."
                             ):
-                                n, n_skip = _importar_movimientos_parsed(
+                                n, n_skip, n_auto = _importar_movimientos_parsed(
                                     pr.movimientos,
                                     periodo_import,
                                 )
@@ -610,6 +648,7 @@ with tab_carga:
                                 f"({pr.banco}) en período **{periodo_import}**. "
                                 f"Omitidos por duplicado: **{n_skip}**."
                             )
+                            st.session_state._import_ok_auto = int(n_auto or 0)
                             st.session_state._import_ok_count = n
                             st.session_state._import_ok_skipped = n_skip
                             st.session_state._import_ok_banco = pr.banco or ""
@@ -659,6 +698,11 @@ with tab_carga:
             periodo_ok = st.session_state.pop("_import_ok_periodo", None)
 
             st.success(msg)
+            n_auto = int(st.session_state.pop("_import_ok_auto", 0) or 0)
+            if n_auto > 0:
+                st.success(
+                    f"✅ {n_auto} pagos registrados automáticamente por cédula detectada"
+                )
             if n_ok is not None:
                 m1, m2, m3, m4, m5 = st.columns(5)
                 with m1:
@@ -915,6 +959,71 @@ with tab_conciliacion:
                         ),
                         "metodo": st.column_config.TextColumn("Método"),
                         "referencia": st.column_config.TextColumn("Referencia"),
+                    },
+                )
+
+            st.divider()
+            st.subheader("📋 Pagos registrados automáticamente")
+            st.caption(
+                "Movimientos conciliados al importar por cédula detectada en la descripción."
+            )
+            filtro_tipo_auto = st.selectbox(
+                "Filtrar por tipo de pago",
+                options=["Todos", "total", "parcial", "extraordinario"],
+                key="filtro_pago_auto_cedula",
+            )
+            try:
+                pagos_auto = repo_conc_ced.listar_pagos_automaticos_periodo(
+                    condominio_id,
+                    periodo_db_conc,
+                    None if filtro_tipo_auto == "Todos" else filtro_tipo_auto,
+                )
+            except DatabaseError as e:
+                st.error(f"❌ {e}")
+                pagos_auto = []
+
+            if not pagos_auto:
+                st.info("No hay pagos automáticos por cédula en este período.")
+            else:
+                rows_pa: list[dict] = []
+                for p in pagos_auto:
+                    mov = p.get("movimientos") or {}
+                    desc = str(mov.get("descripcion") or "")
+                    ceds = extraer_cedulas(desc)
+                    ced_str = ", ".join(ceds) if ceds else "—"
+                    u = p.get("unidades") or {}
+                    unidad = (u.get("codigo") or u.get("numero") or "—")
+                    conc = mov.get("conciliado")
+                    estado_lab = "Conciliado" if conc else "Pendiente"
+                    rows_pa.append(
+                        {
+                            "fecha": mov.get("fecha"),
+                            "referencia": mov.get("referencia") or p.get("referencia"),
+                            "descripcion": desc[:120] + ("…" if len(desc) > 120 else ""),
+                            "cedula_detectada": ced_str,
+                            "unidad": unidad,
+                            "monto_bs": float(p.get("monto_bs") or 0),
+                            "tipo_pago": p.get("tipo_pago") or "—",
+                            "estado": estado_lab,
+                        }
+                    )
+                st.dataframe(
+                    rows_pa,
+                    use_container_width=True,
+                    hide_index=True,
+                    column_config={
+                        "fecha": st.column_config.DateColumn("Fecha"),
+                        "referencia": st.column_config.TextColumn("Referencia"),
+                        "descripcion": st.column_config.TextColumn("Descripción"),
+                        "cedula_detectada": st.column_config.TextColumn(
+                            "Cédula detectada"
+                        ),
+                        "unidad": st.column_config.TextColumn("Unidad"),
+                        "monto_bs": st.column_config.NumberColumn(
+                            "Monto Bs.", format="%.2f"
+                        ),
+                        "tipo_pago": st.column_config.TextColumn("Tipo pago"),
+                        "estado": st.column_config.TextColumn("Estado"),
                     },
                 )
 
