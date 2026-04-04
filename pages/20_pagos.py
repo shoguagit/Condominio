@@ -1,3 +1,5 @@
+from datetime import date
+
 import streamlit as st
 import pandas as pd
 
@@ -11,6 +13,7 @@ from repositories.proceso_repository import ProcesoMensualRepository
 from repositories.mora_repository import MoraRepository
 from repositories.cobro_extraordinario_repository import CobroExtraordinarioRepository
 from utils.auth import check_authentication, require_condominio
+from utils.cierre_mensual import estado_pago_db
 from utils.error_handler import DatabaseError
 from utils.validators import validate_periodo, periodo_to_date_str
 from utils.indiviso_cuota import cuota_bs_desde_presupuesto
@@ -183,6 +186,64 @@ total_a_pagar = round(
 )
 total_a_pagar_usd = _monto_usd_desde_bs(total_a_pagar, tasa)
 
+
+def _refrescar_estado_pago_unidad(target_unidad_id: int) -> None:
+    """Recalcula saldo pendiente vs pagos del período y actualiza solo estado_pago (no saldo)."""
+    u_row = repo_uni.get_by_id(target_unidad_id)
+    if not u_row:
+        return
+    saldo_ux = float(u_row.get("saldo") or 0)
+    pct_x = float(u_row.get("indiviso_pct") or 0)
+    cuota_x = cuota_bs_desde_presupuesto(presupuesto_mes, pct_x) if presupuesto_mes else 0.0
+    try:
+        mora_cfg_x = repo_mora.obtener_config(condominio_id)
+    except DatabaseError:
+        mora_cfg_x = {"activa": False, "pct_mora": 0.0}
+    anio_x = int(periodo_db[:4])
+    mes_x = int(periodo_db[5:7])
+    try:
+        mora_aplica_x = repo_mora.mora_aplica_hoy(condominio_id, anio_x, mes_x)
+    except Exception:
+        mora_aplica_x = False
+    mora_m_x = 0.0
+    if mora_aplica_x and mora_cfg_x.get("activa") and saldo_ux > 0:
+        mora_m_x = MoraRepository.calcular_mora_unidad(
+            saldo_ux, cuota_x, float(mora_cfg_x.get("pct_mora") or 0)
+        )
+    try:
+        ya_x = repo_pago.get_total_pagado_unidad(target_unidad_id, periodo_db)
+    except DatabaseError:
+        ya_x = 0.0
+    p_ym = periodo_db[:7] if periodo_db else ""
+    try:
+        cob_x = repo_cobro_ext.total_por_unidad(target_unidad_id, p_ym)
+    except DatabaseError:
+        cob_x = 0.0
+    total_x = round(saldo_ux + cuota_x + cob_x + mora_m_x - ya_x, 2)
+    ya_eff = max(0.0, float(ya_x))
+    ep = estado_pago_db(total_x, ya_eff)
+    repo_uni.update(target_unidad_id, {"estado_pago": ep})
+
+
+st.markdown("### Monto del pago")
+monto_bs = st.number_input(
+    "Monto recibido (Bs.) *",
+    min_value=0.0,
+    value=max(0.0, float(total_a_pagar)),
+    step=0.01,
+    format="%.2f",
+    help="Precarga el total adeudado; ajuste si es pago parcial. "
+    "Se actualiza el resumen de abajo en tiempo real.",
+    key=f"pago_monto_bs_u{unidad_id}",
+)
+monto_usd_calc = _monto_usd_desde_bs(monto_bs, tasa)
+if tasa and tasa > 0:
+    st.caption(f"≈ USD {monto_usd_calc:,.2f} (tasa: Bs. {tasa:,.2f})")
+else:
+    st.caption(
+        "Sin tasa de cambio: defina **tasa_cambio** en la sesión (sidebar) o en datos del condominio."
+    )
+
 st.markdown("### Resumen de cuenta (unidad seleccionada)")
 total_bs_fmt = f"{total_a_pagar:,.2f}"
 if tasa and tasa > 0:
@@ -198,18 +259,21 @@ for cd in cobros_detalle:
     montos_res.append(f"Bs. {float(cd.get('monto') or 0):,.2f}")
 conceptos_res.extend(
     [
+        "Abonado acumulado (este período)",
         label_intereses,
         "TOTAL A PAGAR",
-        "Pagado hoy (formulario)",
-        "SALDO RESULTANTE",
+        "Monto a registrar (campo arriba)",
+        "Saldo resultante si confirma este monto",
     ]
 )
+sim_res = round(total_a_pagar - float(monto_bs), 2)
 montos_res.extend(
     [
+        f"Bs. {ya_pagado:,.2f}",
         f"Bs. {mora_monto:,.2f}",
         total_row_bs,
-        "(al registrar)",
-        "(al registrar)",
+        f"Bs. {float(monto_bs):,.2f}",
+        f"Bs. {sim_res:,.2f}",
     ]
 )
 df_resumen = pd.DataFrame({"Concepto": conceptos_res, "Monto Bs.": montos_res})
@@ -224,24 +288,7 @@ if tasa and tasa > 0:
         f"(tasa: Bs. {tasa:,.2f})"
     )
 
-# Fuera del form: el monto actualiza el equivalente USD en cada interacción (dentro del form no rerun).
-monto_bs = st.number_input(
-    "Monto recibido (Bs.) *",
-    min_value=0.0,
-    value=max(0.0, float(total_a_pagar)),
-    step=0.01,
-    format="%.2f",
-    help="Precarga el total adeudado; ajuste si es pago parcial.",
-    key="pago_monto_bs_input",
-)
-monto_usd_calc = _monto_usd_desde_bs(monto_bs, tasa)
-if tasa and tasa > 0:
-    st.caption(f"≈ USD {monto_usd_calc:,.2f} (tasa: Bs. {tasa:,.2f})")
-else:
-    st.caption(
-        "Sin tasa de cambio: defina **tasa_cambio** en la sesión (sidebar) o en datos del condominio."
-    )
-
+st.markdown("### Datos del comprobante")
 with st.form("form_pago"):
     fecha_pago = st.date_input("Fecha de pago *")
     metodo = st.radio(
@@ -271,7 +318,6 @@ if guardar:
     elif metodo == "transferencia" and not (referencia or "").strip():
         st.error("La referencia es obligatoria para transferencias.")
     else:
-        saldo_res = round(total_a_pagar - float(monto_bs), 2)
         pid = u_sel.get("propietario_id")
         monto_usd = _monto_usd_desde_bs(float(monto_bs), tasa)
         data = {
@@ -290,12 +336,10 @@ if guardar:
         }
         try:
             repo_pago.create(data)
-            if saldo_res <= 0:
-                ep = "al_dia"
-            else:
-                ep = "parcial"
-            repo_uni.update(unidad_id, {"saldo": saldo_res, "estado_pago": ep})
-            st.success("Pago registrado y saldo actualizado.")
+            # No actualizar unidades.saldo aquí: el adeudo ya se reduce vía tabla pagos
+            # (ya_pagado). Sobrescribir saldo duplicaba el abono y rompía el total.
+            _refrescar_estado_pago_unidad(unidad_id)
+            st.success("Pago registrado. El resumen y el historial se actualizarán al recargar.")
             st.rerun()
         except DatabaseError as e:
             st.error(str(e))
@@ -322,6 +366,7 @@ else:
             musd = round(mbs / tc_row, 2)
         rows.append(
             {
+                "id": h.get("id"),
                 "fecha_pago": h.get("fecha_pago"),
                 "unidad": cod,
                 "metodo": h.get("metodo"),
@@ -331,4 +376,125 @@ else:
                 "estado": h.get("estado"),
             }
         )
-    st.dataframe(rows, use_container_width=True, hide_index=True)
+    st.dataframe(
+        [{k: v for k, v in r.items() if k != "id"} for r in rows],
+        use_container_width=True,
+        hide_index=True,
+    )
+
+    with st.expander("✏️ Corregir o eliminar un pago (errores de unidad o monto)", expanded=False):
+        opciones = []
+        por_label: dict[str, dict] = {}
+        for h in hist:
+            uu = h.get("unidades") or {}
+            cod = (uu.get("codigo") or uu.get("numero") or "—")
+            mbs = float(h.get("monto_bs") or 0)
+            lab = (
+                f"#{h.get('id')} | {h.get('fecha_pago')} | {cod} | "
+                f"Bs. {mbs:,.2f} | {h.get('metodo') or '—'}"
+            )
+            opciones.append(lab)
+            por_label[lab] = h
+
+        sel_lab = st.selectbox("Seleccionar registro", options=opciones, key="pago_edit_sel")
+        rec = por_label.get(sel_lab)
+        if rec:
+            pid = int(rec["id"])
+            uid_actual = int(rec.get("unidad_id") or 0)
+            st.caption(
+                f"Editando pago **id={pid}**. Tras guardar o eliminar se recalcula el estado de pago de la(s) unidad(es) afectada(s)."
+            )
+
+            borrar = st.button(
+                "🗑 Eliminar este pago",
+                type="primary",
+                key=f"pago_del_{pid}",
+            )
+            if borrar:
+                try:
+                    repo_pago.delete(pid)
+                    _refrescar_estado_pago_unidad(uid_actual)
+                    st.success("Pago eliminado.")
+                    st.rerun()
+                except DatabaseError as e:
+                    st.error(str(e))
+
+            with st.form(f"form_edit_pago_{pid}"):
+                fp_raw = rec.get("fecha_pago")
+                if fp_raw is None:
+                    fp_def = date.today()
+                elif hasattr(fp_raw, "isoformat"):
+                    fp_def = date.fromisoformat(str(fp_raw)[:10])
+                elif isinstance(fp_raw, str) and len(fp_raw) >= 10:
+                    fp_def = date.fromisoformat(fp_raw[:10])
+                else:
+                    fp_def = date.today()
+                n_monto = st.number_input(
+                    "Monto (Bs.) *",
+                    min_value=0.0,
+                    value=float(rec.get("monto_bs") or 0),
+                    step=0.01,
+                    format="%.2f",
+                )
+                n_fecha = st.date_input("Fecha de pago *", value=fp_def)
+                met_opts = ["transferencia", "deposito", "efectivo"]
+                mi = met_opts.index(rec.get("metodo")) if rec.get("metodo") in met_opts else 0
+                n_metodo = st.radio(
+                    "Método *",
+                    options=met_opts,
+                    index=mi,
+                    horizontal=True,
+                    format_func=lambda x: {
+                        "transferencia": "Transferencia",
+                        "deposito": "Depósito",
+                        "efectivo": "Efectivo",
+                    }[x],
+                )
+                n_ref = st.text_input(
+                    "N° referencia",
+                    value=str(rec.get("referencia") or ""),
+                )
+                n_obs = st.text_area(
+                    "Observaciones",
+                    value=str(rec.get("observaciones") or ""),
+                    height=60,
+                )
+                n_unidad_lbl = st.selectbox(
+                    "Unidad *",
+                    options=labels,
+                    index=max(0, next((i for i, u in enumerate(unidades) if int(u["id"]) == uid_actual), 0)),
+                    key=f"pago_edit_unidad_{pid}",
+                )
+                n_unidad_id = int(uid_by_label[n_unidad_lbl])
+                guardar_e = st.form_submit_button("Guardar cambios", type="primary")
+
+            if guardar_e:
+                if n_monto <= 0:
+                    st.error("El monto debe ser mayor a cero.")
+                elif n_metodo == "transferencia" and not (n_ref or "").strip():
+                    st.error("La referencia es obligatoria para transferencias.")
+                else:
+                    u_dest = next(x for x in unidades if int(x["id"]) == n_unidad_id)
+                    pid_prop = u_dest.get("propietario_id")
+                    m_usd = _monto_usd_desde_bs(float(n_monto), tasa)
+                    tasa_row = float(rec.get("tasa_cambio") or tasa or 0)
+                    payload = {
+                        "unidad_id": n_unidad_id,
+                        "propietario_id": int(pid_prop) if pid_prop else None,
+                        "fecha_pago": str(n_fecha),
+                        "monto_bs": float(n_monto),
+                        "monto_usd": m_usd if tasa_row > 0 else float(rec.get("monto_usd") or 0),
+                        "tasa_cambio": tasa_row,
+                        "metodo": n_metodo,
+                        "referencia": (n_ref or "").strip() or None,
+                        "observaciones": (n_obs or "").strip() or None,
+                    }
+                    try:
+                        repo_pago.update(pid, payload)
+                        _refrescar_estado_pago_unidad(uid_actual)
+                        if n_unidad_id != uid_actual:
+                            _refrescar_estado_pago_unidad(n_unidad_id)
+                        st.success("Pago actualizado.")
+                        st.rerun()
+                    except DatabaseError as e:
+                        st.error(str(e))

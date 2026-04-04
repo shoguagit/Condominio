@@ -21,6 +21,54 @@ class PagoRepository:
         response = self.client.table(self.table).insert(data).execute()
         return response.data[0]
 
+    @safe_db_operation("pago.get_by_id")
+    def get_by_id(self, pago_id: int) -> dict | None:
+        resp = (
+            self.client.table(self.table)
+            .select("*")
+            .eq("id", int(pago_id))
+            .limit(1)
+            .execute()
+        )
+        rows = resp.data or []
+        return rows[0] if rows else None
+
+    @safe_db_operation("pago.update")
+    def update(self, pago_id: int, data: dict) -> dict:
+        row = (
+            self.client.table(self.table)
+            .select("*")
+            .eq("id", int(pago_id))
+            .limit(1)
+            .execute()
+        ).data or []
+        if not row:
+            raise DatabaseError("Pago no encontrado.")
+        cur = row[0]
+        metodo_eff = (
+            (data["metodo"] if "metodo" in data else cur.get("metodo")) or ""
+        ).lower()
+        ref_eff = data["referencia"] if "referencia" in data else cur.get("referencia")
+        if metodo_eff == "transferencia" and not (str(ref_eff or "").strip()):
+            raise DatabaseError(
+                "El número de referencia es obligatorio para transferencias."
+            )
+        resp = (
+            self.client.table(self.table)
+            .update(data)
+            .eq("id", int(pago_id))
+            .execute()
+        )
+        rows = resp.data or []
+        if not rows:
+            raise DatabaseError("No se pudo actualizar el pago.")
+        return rows[0]
+
+    @safe_db_operation("pago.delete")
+    def delete(self, pago_id: int) -> bool:
+        self.client.table(self.table).delete().eq("id", int(pago_id)).execute()
+        return True
+
     @safe_db_operation("pago.get_by_periodo")
     def get_by_periodo(self, condominio_id: int, periodo: str) -> list[dict]:
         return (
