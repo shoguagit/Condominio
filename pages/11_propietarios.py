@@ -22,11 +22,9 @@ condominio_id = require_condominio()
 if st.session_state.get("_last_condominio_id") != condominio_id:
     st.session_state._last_condominio_id = condominio_id
     st.session_state.prop_records = None
-@st.cache_resource
-def get_repo():
-    return PropietarioRepository(get_supabase_client())
 
-repo = get_repo()
+# Sin cache_resource: si cambia el repository, la instancia no debe quedar desactualizada.
+repo = PropietarioRepository(get_supabase_client())
 
 for k, v in {"prop_modo": None, "prop_records": None}.items():
     if k not in st.session_state:
@@ -37,15 +35,13 @@ init_toolbar_state("propietarios")
 def load_propietarios():
     return repo.get_all(condominio_id)
 
-TIPOS_DOC_PROP = ["V", "E", "J", "G", "P"]
-
 PROP_COLUMNS = {
-    "id":              {"label": "Id",           "width": 55},
-    "nombre":          {"label": "Nombre",       "width": 230},
-    "_cedula_display": {"label": "Cédula / Doc", "width": 130},
-    "telefono":        {"label": "Teléfono",     "width": 120},
-    "correo":          {"label": "Correo",       "width": 190},
-    "activo":          {"label": "Activo",       "width": 65, "format": "boolean"},
+    "id":       {"label": "Id",           "width": 55},
+    "nombre":   {"label": "Nombre",       "width": 230},
+    "cedula":   {"label": "Cédula / Doc", "width": 130},
+    "telefono": {"label": "Teléfono",     "width": 120},
+    "correo":   {"label": "Correo",       "width": 190},
+    "activo":   {"label": "Activo",       "width": 65, "format": "boolean"},
 }
 
 st.markdown("## 👥 Propietarios")
@@ -91,8 +87,6 @@ with col_main:
 
     # ── Lista de cards (solo cuando no hay formulario ni eliminación) ─────────
     if modo not in ("incluir", "modificar", "eliminar"):
-        for r in records:
-            r["_cedula_display"] = r.get("cedula", "") or ""
         render_record_table(
             data=records,
             key="propietarios",
@@ -119,17 +113,6 @@ with col_main:
         st.markdown('<p class="form-card-hint">Campos marcados con * son obligatorios</p>', unsafe_allow_html=True)
         cr = current_rec if is_edit and current_rec else {}
 
-        # Parsear tipo y número del campo cedula (ej: "V-12345678")
-        cedula_raw   = cr.get("cedula", "") or ""
-        if "-" in cedula_raw:
-            tipo_default, num_default = cedula_raw.split("-", 1)
-        else:
-            tipo_default, num_default = "V", cedula_raw
-        try:
-            tipo_idx_default = TIPOS_DOC_PROP.index(tipo_default.upper())
-        except ValueError:
-            tipo_idx_default = 0
-
         with st.form("form_propietario"):
             st.markdown(
                 '<p class="form-section-hdr">Datos personales</p>',
@@ -137,28 +120,14 @@ with col_main:
             )
             col1, col2 = st.columns(2)
             with col1:
-                nombre    = st.text_input("Nombre completo *", value=cr.get("nombre", ""), max_chars=200)
-
-                st.markdown(
-                    '<p class="form-section-hdr">Documento de identidad</p>',
-                    unsafe_allow_html=True,
+                nombre = st.text_input("Nombre completo *", value=cr.get("nombre", ""), max_chars=200)
+                cedula = st.text_input(
+                    "Cédula / RIF *",
+                    value=str(cr.get("cedula") or "").strip(),
+                    placeholder="Ej: V6919271 o J-051151689",
+                    max_chars=30,
+                    help="Documento tal como debe figurar en reportes y estados de cuenta.",
                 )
-                col_tipo, col_num = st.columns([1, 3])
-                with col_tipo:
-                    tipo_doc = st.selectbox(
-                        "Tipo *",
-                        options=TIPOS_DOC_PROP,
-                        index=tipo_idx_default,
-                        help="V=venezolano, E=extranjero, J=jurídico, G=gobierno, P=pasaporte",
-                    )
-                with col_num:
-                    num_doc = st.text_input(
-                        "Número de documento *",
-                        value=num_default,
-                        placeholder="12345678",
-                        max_chars=20,
-                    )
-
                 direccion = st.text_area("Dirección", value=cr.get("direccion", ""), height=80)
 
             with col2:
@@ -182,14 +151,13 @@ with col_main:
             st.rerun()
 
         if guardar:
-            _num = (num_doc or "").strip()
-            cedula_completa = f"{tipo_doc}-{_num}" if _num else ""
+            cedula_val = (cedula or "").strip()
             errors = validate_form(
-                {"nombre": nombre, "cedula": cedula_completa, "correo": correo},
+                {"nombre": nombre, "cedula": cedula_val, "correo": correo},
                 {
-                    "nombre":  {"required": True,  "max_length": 200},
-                    "cedula":  {"required": True,  "max_length": 30},
-                    "correo":  {"required": False, "type": "email"},
+                    "nombre": {"required": True, "max_length": 200},
+                    "cedula": {"required": True, "max_length": 30},
+                    "correo": {"required": False, "type": "email"},
                 },
             )
             if errors:
@@ -199,7 +167,7 @@ with col_main:
                 payload = {
                     "condominio_id": condominio_id,
                     "nombre":        (nombre or "").strip(),
-                    "cedula":        cedula_completa,
+                    "cedula":        cedula_val,
                     "telefono":      (telefono or "").strip() or None,
                     "correo":        (correo or "").strip() or None,
                     "direccion":     (direccion or "").strip() or None,

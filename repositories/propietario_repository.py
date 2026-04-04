@@ -2,6 +2,11 @@ from supabase import Client
 
 from utils.error_handler import safe_db_operation
 
+# Columnas usadas por la app (incluye `cedula`; evita depender de nombres viejos tipo_documento/numero_documento).
+_SELECT_PROPIETARIO = (
+    "id, condominio_id, nombre, cedula, telefono, correo, direccion, notas, activo"
+)
+
 
 class PropietarioRepository:
     def __init__(self, client: Client):
@@ -12,7 +17,7 @@ class PropietarioRepository:
     def get_all(self, condominio_id: int, solo_activos: bool = False) -> list[dict]:
         query = (
             self.client.table(self.table)
-            .select("*")
+            .select(_SELECT_PROPIETARIO)
             .eq("condominio_id", condominio_id)
             .order("nombre")
         )
@@ -24,7 +29,7 @@ class PropietarioRepository:
     def get_by_id(self, propietario_id: int) -> dict | None:
         response = (
             self.client.table(self.table)
-            .select("*")
+            .select(_SELECT_PROPIETARIO)
             .eq("id", propietario_id)
             .single()
             .execute()
@@ -55,7 +60,7 @@ class PropietarioRepository:
     def search(self, condominio_id: int, term: str) -> list[dict]:
         response = (
             self.client.table(self.table)
-            .select("*")
+            .select(_SELECT_PROPIETARIO)
             .eq("condominio_id", condominio_id)
             .ilike("nombre", f"%{term}%")
             .order("nombre")
