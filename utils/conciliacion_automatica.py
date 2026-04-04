@@ -20,7 +20,6 @@ def procesar_conciliacion_automatica(
     movimiento: dict,
     condominio_id: int,
     periodo: str,
-    tasa_cambio: float,
 ) -> dict:
     """
     Proceso completo para un movimiento bancario.
@@ -35,10 +34,10 @@ def procesar_conciliacion_automatica(
         "motivo_omision": None,
     }
     try:
-        if not movimiento.get("es_ingreso"):
+        if (movimiento.get("tipo") or "").lower() != "ingreso":
             return {
                 **vacio,
-                "motivo_omision": "no_es_ingreso",
+                "motivo_omision": "no_ingreso",
             }
 
         mid = movimiento.get("id")
@@ -48,6 +47,21 @@ def procesar_conciliacion_automatica(
         client = get_supabase_client()
         repo = ConciliacionCedulaRepository(client)
 
+        tasa = 0.0
+        try:
+            import streamlit as st
+
+            tasa = float(st.session_state.get("tasa_cambio", 0) or 0)
+        except Exception:
+            pass
+
+        if tasa <= 0:
+            config = repo.obtener_tasa_condominio(int(condominio_id))
+            tasa = float(config.get("tasa_cambio", 0) or 0)
+
+        if tasa <= 0:
+            tasa = 1.0
+
         if repo.movimiento_ya_conciliado(int(mid)):
             return {
                 **vacio,
@@ -55,7 +69,7 @@ def procesar_conciliacion_automatica(
                 "procesado": False,
             }
 
-        texto = movimiento.get("descripcion") or movimiento.get("concepto") or ""
+        texto = movimiento.get("descripcion") or ""
         cedulas = extraer_cedulas(str(texto))
         if not cedulas:
             return {
@@ -100,7 +114,7 @@ def procesar_conciliacion_automatica(
                 referencia=referencia,
                 movimiento_id=int(mid),
                 tipo_pago=tipo,
-                tasa_cambio=float(tasa_cambio or 0),
+                tasa_cambio=float(tasa),
                 propietario_id=u.get("propietario_id"),
             )
             es_dup = bool(p.pop("_es_reutilizado", False))

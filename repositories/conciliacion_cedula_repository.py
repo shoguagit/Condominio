@@ -40,6 +40,18 @@ class ConciliacionCedulaRepository:
     def __init__(self, client: Client):
         self.client = client
 
+    @safe_db_operation("conciliacion_cedula.obtener_tasa_condominio")
+    def obtener_tasa_condominio(self, condominio_id: int) -> dict:
+        """Lee tasa_cambio del condominio (vacío si no existe fila)."""
+        rows = (
+            self.client.table("condominios")
+            .select("tasa_cambio")
+            .eq("id", int(condominio_id))
+            .limit(1)
+            .execute()
+        ).data or []
+        return dict(rows[0]) if rows else {}
+
     @safe_db_operation("conciliacion_cedula.buscar_unidades_por_cedula")
     def buscar_unidades_por_cedula(
         self, cedulas: list[str], condominio_id: int

@@ -11,7 +11,6 @@ from repositories.unidad_repository import UnidadRepository
 from repositories.propietario_repository import PropietarioRepository
 from repositories.conciliacion_repository import ConciliacionRepository
 from repositories.conciliacion_cedula_repository import ConciliacionCedulaRepository
-from repositories.condominio_repository import CondominioRepository
 from components.header import render_header
 from components.breadcrumb import render_breadcrumb
 from utils.auth import check_authentication, require_condominio
@@ -82,18 +81,6 @@ render_header()
 render_breadcrumb("Movimientos Bancarios")
 
 condominio_id = require_condominio()
-
-
-def _tasa_import_mov() -> float:
-    """Prioriza tasa en sesión; si no hay, usa la del condominio."""
-    ts = float(st.session_state.get("tasa_cambio") or 0)
-    if ts > 0:
-        return ts
-    try:
-        c = CondominioRepository(get_supabase_client()).get_by_id(condominio_id)
-        return float(c.get("tasa_cambio") or 0) if c else 0.0
-    except Exception:
-        return 0.0
 
 
 @st.cache_resource
@@ -381,7 +368,6 @@ with tab_carga:
             conciliados_auto = 0
             cid = int(condominio_id)
             periodo_ym_imp = periodo_import_db[:7]
-            tasa_cambio = _tasa_import_mov()
             try:
                 raw_ex = repo_mov.get_all(condominio_id, periodo_import_db)
             except DatabaseError:
@@ -422,7 +408,7 @@ with tab_carga:
                         "id": int(created["id"]),
                         "descripcion": m.concepto,
                         "monto_bs": float(m.monto),
-                        "es_ingreso": True,
+                        "tipo": "ingreso",
                         "referencia": m.referencia,
                         "fecha": str(m.fecha),
                     }
@@ -430,7 +416,6 @@ with tab_carga:
                         movimiento=movimiento_dict,
                         condominio_id=cid,
                         periodo=periodo_import_db[:7],
-                        tasa_cambio=tasa_cambio,
                     )
                     if resultado_conc.get("pagos_registrados", 0) > 0:
                         conciliados_auto += resultado_conc["pagos_registrados"]
