@@ -36,6 +36,32 @@ def _cedulas_valores_para_in(cedulas: list[str]) -> list[str]:
     return out
 
 
+def _cedula_comparable_key(raw: str | None) -> str:
+    """
+    Clave estable para comparar cédula banco vs BD (puntos, guiones, ceros a la izquierda).
+    Ej.: V05220576 y V5220576 normalizados al mismo prefijo+numérico sin ceros iniciales.
+    """
+    n = _normalize_ced(raw or "")
+    if not n:
+        return ""
+    if len(n) > 1 and n[0].isalpha():
+        num = n[1:].lstrip("0") or "0"
+        return n[0] + num
+    return n.lstrip("0") or "0"
+
+
+def _cedula_coincide_lista(cedulas_banco: list[str], cedula_db: str | None) -> bool:
+    if not cedulas_banco:
+        return False
+    kdb = _cedula_comparable_key(cedula_db)
+    if not kdb:
+        return False
+    for c in cedulas_banco:
+        if _cedula_comparable_key(c) == kdb:
+            return True
+    return False
+
+
 class ConciliacionCedulaRepository:
     def __init__(self, client: Client):
         self.client = client
@@ -57,8 +83,13 @@ class ConciliacionCedulaRepository:
         self, cedulas: list[str], condominio_id: int
     ) -> list[dict]:
         """
-        Unidades cuyo propietario principal (`unidades.propietario_id`) tiene
-        `propietarios.cedula` igual a alguna variante buscada (coincidencia exacta en BD).
+        Unidades vinculadas a propietarios cuya cédula coincide con las extraídas del banco.
+
+        1) Intenta coincidencia exacta en SQL (.in_ con variantes).
+        2) Si no hay filas: recorre propietarios activos del condominio y compara con
+           clave comparable (formato distinto, ceros a la izquierda).
+        3) Une unidades por `propietario_id` principal y por `unidad_propietarios`
+           (titular y copropietario).
 
         Retorna: unidad_id, codigo_unidad, propietario_nombre, cedula_encontrada,
         cuota_bs, saldo_bs, propietario_id
@@ -67,17 +98,28 @@ class ConciliacionCedulaRepository:
             return []
 
         cedulas_buscar = _cedulas_valores_para_in(cedulas)
-        if not cedulas_buscar:
-            return []
+        props: list[dict] = []
+        if cedulas_buscar:
+            props = (
+                self.client.table("propietarios")
+                .select("id, nombre, cedula")
+                .eq("condominio_id", int(condominio_id))
+                .eq("activo", True)
+                .in_("cedula", cedulas_buscar)
+                .execute()
+            ).data or []
 
-        props = (
-            self.client.table("propietarios")
-            .select("id, nombre, cedula")
-            .eq("condominio_id", int(condominio_id))
-            .eq("activo", True)
-            .in_("cedula", cedulas_buscar)
-            .execute()
-        ).data or []
+        if not props:
+            all_p = (
+                self.client.table("propietarios")
+                .select("id, nombre, cedula")
+                .eq("condominio_id", int(condominio_id))
+                .eq("activo", True)
+                .execute()
+            ).data or []
+            props = [
+                p for p in all_p if _cedula_coincide_lista(cedulas, p.get("cedula"))
+            ]
 
         if not props:
             return []
@@ -85,24 +127,75 @@ class ConciliacionCedulaRepository:
         prop_map = {int(p["id"]): p for p in props}
         prop_ids = list(prop_map.keys())
 
-        unidades_rows = (
-            self.client.table("unidades")
-            .select("id, codigo, numero, saldo, propietario_id")
-            .eq("condominio_id", int(condominio_id))
-            .eq("activo", True)
-            .in_("propietario_id", prop_ids)
-            .execute()
-        ).data or []
+        unidad_ids: set[int] = set()
+        prop_por_unidad: dict[int, int] = {}
+
+        for pid in prop_ids:
+            u_direct = (
+                self.client.table("unidades")
+                .select("id")
+                .eq("condominio_id", int(condominio_id))
+                .eq("activo", True)
+                .eq("propietario_id", pid)
+                .execute()
+            ).data or []
+            for u in u_direct:
+                uid = int(u["id"])
+                unidad_ids.add(uid)
+                prop_por_unidad.setdefault(uid, pid)
+
+            up_rows = (
+                self.client.table("unidad_propietarios")
+                .select("unidad_id")
+                .eq("propietario_id", pid)
+                .execute()
+            ).data or []
+            for row in up_rows:
+                uid = row.get("unidad_id")
+                if uid is None:
+                    continue
+                uid = int(uid)
+                ucheck = (
+                    self.client.table("unidades")
+                    .select("id, condominio_id, activo")
+                    .eq("id", uid)
+                    .limit(1)
+                    .execute()
+                ).data or []
+                if not ucheck:
+                    continue
+                if int(ucheck[0].get("condominio_id") or 0) != int(condominio_id):
+                    continue
+                if ucheck[0].get("activo") is False:
+                    continue
+                unidad_ids.add(uid)
+                prop_por_unidad.setdefault(uid, pid)
+
+        if not unidad_ids:
+            return []
+
+        ulist = sorted(unidad_ids)
+        chunk = 80
+        urows_full: list[dict] = []
+        for i in range(0, len(ulist), chunk):
+            part = ulist[i : i + chunk]
+            batch = (
+                self.client.table("unidades")
+                .select("id, codigo, saldo")
+                .in_("id", part)
+                .execute()
+            ).data or []
+
+            urows_full.extend(batch or [])
 
         resultado: list[dict] = []
-        for u in unidades_rows:
-            pid = u.get("propietario_id")
+        for u in urows_full:
+            uid = int(u["id"])
+            pid = prop_por_unidad.get(uid)
             if pid is None:
                 continue
-            pid = int(pid)
             prop = prop_map.get(pid) or {}
-            uid = int(u["id"])
-            cod = (u.get("codigo") or u.get("numero") or "").strip() or str(uid)
+            cod = (u.get("codigo") or "").strip() or str(uid)
             resultado.append(
                 {
                     "unidad_id": uid,
@@ -114,6 +207,7 @@ class ConciliacionCedulaRepository:
                     "propietario_id": pid,
                 }
             )
+        resultado.sort(key=lambda r: (r["codigo_unidad"] or "").upper())
         return resultado
 
     @safe_db_operation("conciliacion_cedula.obtener_cuota_unidad")
