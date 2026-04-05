@@ -419,6 +419,14 @@ with tab_carga:
                     )
                     if resultado_conc.get("pagos_registrados", 0) > 0:
                         conciliados_auto += resultado_conc["pagos_registrados"]
+                    else:
+                        # LOG TEMPORAL — quitar después del diagnóstico
+                        st.warning(
+                            f"No conciliado mov {movimiento_dict.get('id')}: "
+                            f"motivo={resultado_conc.get('motivo_omision')} "
+                            f"cedulas={resultado_conc.get('cedulas_encontradas')} "
+                            f"unidades={resultado_conc.get('unidades_vinculadas')}"
+                        )
                     if not resultado_conc.get("procesado"):
                         try:
                             sug = repo_conciliacion.sugerir_vinculacion(
