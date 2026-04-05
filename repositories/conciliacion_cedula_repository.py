@@ -244,6 +244,7 @@ class ConciliacionCedulaRepository:
         tipo_pago: str,
         tasa_cambio: float,
         propietario_id: int | None = None,
+        observaciones: str | None = None,
     ) -> dict:
         """
         Inserta fila en pagos con origen conciliacion_automatica.
@@ -268,6 +269,10 @@ class ConciliacionCedulaRepository:
         tc = float(tasa_cambio or 0)
         m_usd = round(float(monto_bs) / tc, 4) if tc > 0 else 0.0
 
+        obs = (observaciones or "").strip()
+        if len(obs) > 8000:
+            obs = obs[:8000]
+
         payload = {
             "condominio_id": int(condominio_id),
             "unidad_id": int(unidad_id),
@@ -279,6 +284,7 @@ class ConciliacionCedulaRepository:
             "tasa_cambio": tc,
             "metodo": "transferencia",
             "referencia": ref[:100],
+            "observaciones": obs or None,
             "estado": "confirmado",
             "tipo_pago": tipo_pago,
             "origen": "conciliacion_automatica",

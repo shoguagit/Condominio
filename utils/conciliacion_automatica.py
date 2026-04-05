@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import logging
+from datetime import date
 
 from config.supabase_client import get_supabase_client
 from repositories.conciliacion_cedula_repository import ConciliacionCedulaRepository
 from utils.cedula_extractor import clasificar_pago, extraer_cedulas
+from utils.tasa_bcv_resolver import resolver_tasa_para_fecha
 from utils.sincronizar_estado_pago_unidad import sincronizar_estado_pago_unidad
 from utils.supabase_compat import json_safe_periodo
 
@@ -109,6 +111,23 @@ def procesar_conciliacion_automatica(
         monto_bs = float(movimiento.get("monto_bs") or 0)
         fecha_pago = str(movimiento.get("fecha") or "")[:10]
         referencia = str(movimiento.get("referencia") or "").strip()
+        obs_mov = str(movimiento.get("descripcion") or "").strip()
+        if len(obs_mov) > 8000:
+            obs_mov = obs_mov[:8000]
+
+        try:
+            fp_d = date.fromisoformat(fecha_pago) if len(fecha_pago) >= 10 else date.today()
+        except ValueError:
+            fp_d = date.today()
+
+        t_bcv = None
+        try:
+            t_bcv, _ = resolver_tasa_para_fecha(client, fp_d)
+        except Exception:
+            logger.warning("CONC_AUTO: resolver tasa BCV falló; uso tasa sesión", exc_info=True)
+        tasa_pago = float(t_bcv) if t_bcv and t_bcv > 0 else float(tasa)
+        if tasa_pago <= 0:
+            tasa_pago = 1.0
 
         pagos_nuevos = 0
         first_pago_id: int | None = None
@@ -133,8 +152,9 @@ def procesar_conciliacion_automatica(
                 referencia=referencia,
                 movimiento_id=int(mid),
                 tipo_pago=tipo,
-                tasa_cambio=float(tasa),
+                tasa_cambio=float(tasa_pago),
                 propietario_id=u.get("propietario_id"),
+                observaciones=obs_mov or None,
             )
             es_dup = bool(p.pop("_es_reutilizado", False))
             if not es_dup:

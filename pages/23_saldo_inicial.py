@@ -19,7 +19,7 @@ import pandas as pd
 from components.header import render_header
 from config.supabase_client import get_supabase_client
 from repositories.saldo_inicial_repository import SaldoInicialRepository
-from utils.auth import check_authentication, require_condominio
+from utils.auth import check_authentication, is_admin, require_condominio
 from utils.error_handler import DatabaseError
 from utils.parser_historico import (
     detectar_formato_excel,
@@ -77,6 +77,11 @@ with st.expander("📋 ¿Cómo funciona este módulo?", expanded=False):
         Se cargan con el valor del archivo pero quedan
         marcadas para revisión manual. El admin puede
         corregir el saldo desde esta misma pantalla.
+
+        **¿Corregir un saldo ya cargado?** Los usuarios con rol **administrador** pueden usar
+        la sección *Editar saldos iniciales cargados* para cualquier unidad que ya tenga saldo
+        inicial (no solo las marcadas para revisión). El saldo operativo se ajusta por la
+        diferencia para no desfasar los pagos registrados.
         """
     )
 
@@ -333,7 +338,7 @@ else:
                 nuevo_saldo = st.number_input(
                     "Saldo correcto (Bs.)",
                     min_value=0.0,
-                    value=float(u.get("saldo") or 0),
+                    value=float(u.get("saldo_inicial_bs") or u.get("saldo") or 0),
                     step=0.01,
                     format="%.2f",
                     key=f"saldo_manual_{uid}",
@@ -370,6 +375,91 @@ else:
                     st.rerun()
                 except DatabaseError as e:
                     st.error(f"❌ {e}")
+
+# ═══════════════════════════════════════
+# EDICIÓN: cualquier saldo inicial ya cargado (solo admin)
+# ═══════════════════════════════════════
+st.divider()
+st.subheader("✏️ Editar saldos iniciales cargados")
+if not is_admin():
+    st.caption(
+        "Solo usuarios con rol **administrador** pueden corregir aquí un saldo inicial "
+        "ya registrado. Los demás pueden usar la sección de revisión si hay unidades marcadas."
+    )
+else:
+    st.caption(
+        "Seleccione la unidad y el nuevo **saldo inicial** (Bs.). "
+        "El **saldo operativo** de la unidad se ajusta automáticamente por la misma diferencia, "
+        "para no desalinear los pagos ya registrados."
+    )
+    try:
+        con_si = saldo_repo.listar_unidades_con_saldo_inicial_cargado(condominio_id)
+    except DatabaseError as e:
+        con_si = []
+        st.error(f"❌ No se pudo cargar el listado: {e}")
+
+    if not con_si:
+        st.info("No hay unidades con saldo inicial cargado para editar.")
+    else:
+        def _lbl(rec: dict) -> str:
+            rev = " ⚠️ revisión" if rec.get("requiere_revision") else ""
+            return (
+                f"{rec['codigo']} — {rec['propietario_nombre']} — "
+                f"Bs. {rec['saldo_inicial_bs']:,.2f}{rev}"
+            )
+
+        opciones = {_lbl(r): r for r in con_si}
+        sel_key = "saldo_admin_unidad_sel"
+        elegida = st.selectbox(
+            "Unidad",
+            options=list(opciones.keys()),
+            key=sel_key,
+        )
+        rec = opciones[elegida]
+        uid_adm = int(rec["id"])
+
+        c_a, c_b = st.columns(2)
+        with c_a:
+            st.metric("Saldo inicial actual", f"Bs. {rec['saldo_inicial_bs']:,.2f}")
+        with c_b:
+            st.metric("Saldo operativo actual", f"Bs. {rec['saldo']:,.2f}")
+
+        nuevo_si = st.number_input(
+            "Nuevo saldo inicial (Bs.)",
+            min_value=0.0,
+            value=float(rec["saldo_inicial_bs"]),
+            step=0.01,
+            format="%.2f",
+            key=f"saldo_admin_val_{uid_adm}",
+        )
+        delta_prev = nuevo_si - float(rec["saldo_inicial_bs"])
+        if abs(delta_prev) > 1e-6:
+            st.caption(
+                f"Tras guardar, el saldo operativo quedaría en "
+                f"**Bs. {rec['saldo'] + delta_prev:,.2f}** "
+                f"(diferencia aplicada: {delta_prev:+,.2f})."
+            )
+
+        nota_adm = st.text_input(
+            "Motivo del ajuste (recomendado)",
+            placeholder="Ej.: Error en Excel fila 12 — corregido según estado de cuenta",
+            key=f"saldo_admin_nota_{uid_adm}",
+        )
+
+        if st.button("Guardar saldo inicial", type="primary", key="saldo_admin_guardar"):
+            try:
+                saldo_repo.actualizar_saldo_manual(
+                    unidad_id=uid_adm,
+                    saldo_bs=float(nuevo_si),
+                    nota=nota_adm,
+                )
+                st.success(
+                    f"✅ Unidad **{rec['codigo']}**: saldo inicial actualizado a "
+                    f"Bs. {nuevo_si:,.2f}."
+                )
+                st.rerun()
+            except DatabaseError as e:
+                st.error(f"❌ {e}")
 
 # ═══════════════════════════════════════
 # SECCIÓN 5: RESUMEN FINAL

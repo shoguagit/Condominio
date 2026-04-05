@@ -144,6 +144,14 @@ def check_permission(required_role: str) -> None:
         st.stop()
 
 
+def is_admin() -> bool:
+    """True si el usuario en sesión tiene rol admin."""
+    user_role = st.session_state.get("user_role", "operador")
+    if user_role == "consulta":
+        user_role = "operador"
+    return user_role == "admin"
+
+
 def login(email: str, password: str) -> tuple:
     """Autentica al usuario con Supabase Auth."""
     client = get_supabase_client()

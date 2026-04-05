@@ -421,6 +421,24 @@ CREATE TRIGGER trg_empleados_updated_at
 
 
 -- =============================================================================
+-- TASAS BCV POR DÍA (caché de tasa oficial Bs./USD — ve.dolarapi.com)
+-- =============================================================================
+CREATE TABLE IF NOT EXISTS tasas_bcv_dia (
+    fecha            DATE PRIMARY KEY,
+    tasa_bs_por_usd  NUMERIC(18, 6) NOT NULL,
+    fuente           TEXT NOT NULL DEFAULT 'oficial',
+    actualizado_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    CONSTRAINT tasas_bcv_dia_tasa_positiva CHECK (tasa_bs_por_usd > 0)
+);
+
+CREATE INDEX IF NOT EXISTS idx_tasas_bcv_dia_fecha ON tasas_bcv_dia (fecha DESC);
+
+ALTER TABLE tasas_bcv_dia ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS "service_role_all" ON tasas_bcv_dia;
+CREATE POLICY "service_role_all" ON tasas_bcv_dia FOR ALL USING (true);
+
+
+-- =============================================================================
 -- VERIFICACIÓN FINAL
 -- Ejecuta este SELECT para confirmar que todas las tablas fueron creadas:
 -- =============================================================================

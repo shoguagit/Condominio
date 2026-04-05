@@ -17,6 +17,8 @@ from utils.cierre_mensual import estado_pago_db
 from utils.error_handler import DatabaseError
 from utils.validators import validate_periodo, periodo_to_date_str
 from utils.indiviso_cuota import cuota_bs_desde_presupuesto
+from utils.dolar_oficial_ve import monto_usd_desde_bs
+from utils.tasa_bcv_resolver import resolver_tasa_para_fecha
 from components.header import render_header
 from components.breadcrumb import render_breadcrumb
 
@@ -81,9 +83,18 @@ tasa = _tasa_efectiva()
 
 
 def _monto_usd_desde_bs(monto_bs_val: float, tasa_val: float) -> float:
-    if tasa_val and tasa_val > 0:
-        return round(float(monto_bs_val) / float(tasa_val), 2)
-    return 0.0
+    return monto_usd_desde_bs(monto_bs_val, tasa_val)
+
+
+def _tasa_bcv_hoy_o_sesion() -> tuple[float, str]:
+    """(tasa numérica, origen breve para captions)."""
+    th, _ = resolver_tasa_para_fecha(_client_pg, date.today())
+    if th and th > 0:
+        return float(th), "BCV oficial (hoy)"
+    ts = _tasa_efectiva()
+    if ts and ts > 0:
+        return float(ts), "sesión/condominio"
+    return 0.0, ""
 
 pres_row = fetch_presupuesto_si_existe(
     get_supabase_client(), condominio_id, periodo_db
@@ -179,7 +190,8 @@ except DatabaseError:
 total_a_pagar = round(
     saldo_u + cuota_m + cobros_ext_total + mora_monto - ya_pagado, 2
 )
-total_a_pagar_usd = _monto_usd_desde_bs(total_a_pagar, tasa)
+_t_res, _orig_res = _tasa_bcv_hoy_o_sesion()
+total_a_pagar_usd = _monto_usd_desde_bs(total_a_pagar, _t_res) if _t_res > 0 else 0.0
 
 
 def _refrescar_estado_pago_unidad(target_unidad_id: int) -> None:
@@ -231,18 +243,23 @@ monto_bs = st.number_input(
     "Se actualiza el resumen de abajo en tiempo real.",
     key=f"pago_monto_bs_u{unidad_id}",
 )
-monto_usd_calc = _monto_usd_desde_bs(monto_bs, tasa)
-if tasa and tasa > 0:
-    st.caption(f"≈ USD {monto_usd_calc:,.2f} (tasa: Bs. {tasa:,.2f})")
+_tc_prev, _lbl_prev = _tasa_bcv_hoy_o_sesion()
+monto_usd_calc = _monto_usd_desde_bs(monto_bs, _tc_prev) if _tc_prev > 0 else 0.0
+if _tc_prev > 0:
+    st.caption(
+        f"≈ USD {monto_usd_calc:,.4f} (referencia: {_lbl_prev}, Bs. {_tc_prev:,.4f} / USD). "
+        "Al **registrar**, se usa la tasa BCV oficial del **día de fecha de pago** del comprobante."
+    )
 else:
     st.caption(
-        "Sin tasa de cambio: defina **tasa_cambio** en la sesión (sidebar) o en datos del condominio."
+        "Sin tasa: no hay dato BCV ni tasa en sesión/condominio. "
+        "Defina **tasa_cambio** en la sesión o en el condominio como respaldo."
     )
 
 st.markdown("### Resumen de cuenta (unidad seleccionada)")
 total_bs_fmt = f"{total_a_pagar:,.2f}"
-if tasa and tasa > 0:
-    total_row_bs = f"Bs. {total_bs_fmt}  ≈ USD {total_a_pagar_usd:,.2f}"
+if _t_res > 0:
+    total_row_bs = f"Bs. {total_bs_fmt}  ≈ USD {total_a_pagar_usd:,.4f}"
 else:
     total_row_bs = f"Bs. {total_bs_fmt}"
 
@@ -277,10 +294,10 @@ if mora_monto == 0.0 and not mora_cfg.get("activa"):
     st.caption("_Intereses de mora: sin mora configurada._")
 elif mora_monto == 0.0 and saldo_u <= 0:
     st.caption("_Intereses de mora: crédito a favor — sin mora._")
-if tasa and tasa > 0:
+if _t_res > 0:
     st.caption(
-        f"**TOTAL A PAGAR:** Bs. {total_a_pagar:,.2f} ≈ USD {total_a_pagar_usd:,.2f} "
-        f"(tasa: Bs. {tasa:,.2f})"
+        f"**TOTAL A PAGAR:** Bs. {total_a_pagar:,.2f} ≈ USD {total_a_pagar_usd:,.4f} "
+        f"(referencia Bs./USD: {_t_res:,.4f})"
     )
 
 st.markdown("### Datos del comprobante")
@@ -314,7 +331,18 @@ if guardar:
         st.error("La referencia es obligatoria para transferencias.")
     else:
         pid = u_sel.get("propietario_id")
-        monto_usd = _monto_usd_desde_bs(float(monto_bs), tasa)
+        t_bcv, _meta = resolver_tasa_para_fecha(_client_pg, fecha_pago)
+        if t_bcv and t_bcv > 0:
+            t_save = float(t_bcv)
+            monto_usd = monto_usd_desde_bs(float(monto_bs), t_save)
+        else:
+            t_save = float(_tasa_efectiva() or 0)
+            if t_save <= 0:
+                t_save = 1.0
+            monto_usd = monto_usd_desde_bs(float(monto_bs), t_save)
+            st.warning(
+                "No se obtuvo tasa BCV oficial para esa fecha; se usó la tasa del condominio/sesión (o 1,0 como último recurso)."
+            )
         data = {
             "condominio_id": condominio_id,
             "unidad_id": unidad_id,
@@ -323,7 +351,7 @@ if guardar:
             "fecha_pago": str(fecha_pago),
             "monto_bs": float(monto_bs),
             "monto_usd": monto_usd,
-            "tasa_cambio": tasa,
+            "tasa_cambio": t_save,
             "metodo": metodo,
             "referencia": (referencia or "").strip() or None,
             "observaciones": (obs or "").strip() or None,
@@ -358,7 +386,8 @@ else:
         musd = float(h.get("monto_usd") or 0)
         tc_row = float(h.get("tasa_cambio") or 0)
         if musd == 0 and tc_row > 0 and mbs > 0:
-            musd = round(mbs / tc_row, 2)
+            musd = round(mbs / tc_row, 4)
+        tasa_txt = f"{tc_row:,.4f}" if tc_row > 0 else "—"
         rows.append(
             {
                 "id": h.get("id"),
@@ -367,7 +396,8 @@ else:
                 "metodo": h.get("metodo"),
                 "referencia": h.get("referencia") or "—",
                 "monto_bs": f"{mbs:,.2f}",
-                "monto_usd": f"{musd:,.2f}",
+                "Tasa aplicada (Bs./USD)": tasa_txt,
+                "monto_usd": f"{musd:,.4f}",
                 "estado": h.get("estado"),
             }
         )
@@ -471,15 +501,25 @@ else:
                 else:
                     u_dest = next(x for x in unidades if int(x["id"]) == n_unidad_id)
                     pid_prop = u_dest.get("propietario_id")
-                    m_usd = _monto_usd_desde_bs(float(n_monto), tasa)
-                    tasa_row = float(rec.get("tasa_cambio") or tasa or 0)
+                    t_bcv_e, _ = resolver_tasa_para_fecha(_client_pg, n_fecha)
+                    if t_bcv_e and t_bcv_e > 0:
+                        t_save_e = float(t_bcv_e)
+                        m_usd = monto_usd_desde_bs(float(n_monto), t_save_e)
+                    else:
+                        t_save_e = float(_tasa_efectiva() or 0)
+                        if t_save_e <= 0:
+                            t_save_e = float(rec.get("tasa_cambio") or 0) or 1.0
+                        m_usd = monto_usd_desde_bs(float(n_monto), t_save_e)
+                        st.warning(
+                            "No se obtuvo tasa BCV para la nueva fecha; se usó tasa de respaldo para recalcular USD."
+                        )
                     payload = {
                         "unidad_id": n_unidad_id,
                         "propietario_id": int(pid_prop) if pid_prop else None,
                         "fecha_pago": str(n_fecha),
                         "monto_bs": float(n_monto),
-                        "monto_usd": m_usd if tasa_row > 0 else float(rec.get("monto_usd") or 0),
-                        "tasa_cambio": tasa_row,
+                        "monto_usd": m_usd,
+                        "tasa_cambio": t_save_e,
                         "metodo": n_metodo,
                         "referencia": (n_ref or "").strip() or None,
                         "observaciones": (n_obs or "").strip() or None,

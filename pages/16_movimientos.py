@@ -1056,14 +1056,22 @@ with tab_conciliacion:
                     unidad = (u.get("codigo") or u.get("numero") or "—")
                     conc = mov.get("conciliado")
                     estado_lab = "Conciliado" if conc else "Pendiente"
+                    tc_p = float(p.get("tasa_cambio") or 0)
+                    musd_p = float(p.get("monto_usd") or 0)
+                    obs_p = str(p.get("observaciones") or "").strip()
+                    obs_short = obs_p[:100] + ("…" if len(obs_p) > 100 else "") if obs_p else "—"
                     rows_pa.append(
                         {
                             "fecha": mov.get("fecha"),
+                            "fecha_pago": p.get("fecha_pago"),
                             "referencia": mov.get("referencia") or p.get("referencia"),
                             "descripcion": desc[:120] + ("…" if len(desc) > 120 else ""),
+                            "observaciones": obs_short,
                             "cedula_detectada": ced_str,
                             "unidad": unidad,
                             "monto_bs": float(p.get("monto_bs") or 0),
+                            "tasa_bcv": tc_p if tc_p > 0 else None,
+                            "monto_usd": musd_p,
                             "tipo_pago": p.get("tipo_pago") or "—",
                             "estado": estado_lab,
                         }
@@ -1073,15 +1081,23 @@ with tab_conciliacion:
                     use_container_width=True,
                     hide_index=True,
                     column_config={
-                        "fecha": st.column_config.DateColumn("Fecha"),
+                        "fecha": st.column_config.DateColumn("Fecha mov."),
+                        "fecha_pago": st.column_config.DateColumn("Fecha pago"),
                         "referencia": st.column_config.TextColumn("Referencia"),
                         "descripcion": st.column_config.TextColumn("Descripción"),
+                        "observaciones": st.column_config.TextColumn("Obs. pago"),
                         "cedula_detectada": st.column_config.TextColumn(
                             "Cédula detectada"
                         ),
                         "unidad": st.column_config.TextColumn("Unidad"),
                         "monto_bs": st.column_config.NumberColumn(
                             "Monto Bs.", format="%.2f"
+                        ),
+                        "tasa_bcv": st.column_config.NumberColumn(
+                            "Tasa BCV (Bs./USD)", format="%.4f"
+                        ),
+                        "monto_usd": st.column_config.NumberColumn(
+                            "Monto USD", format="%.4f"
                         ),
                         "tipo_pago": st.column_config.TextColumn("Tipo pago"),
                         "estado": st.column_config.TextColumn("Estado"),

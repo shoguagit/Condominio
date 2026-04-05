@@ -280,6 +280,44 @@ class SaldoInicialRepository:
             )
         return out
 
+    @safe_db_operation("saldo_inicial.listar_unidades_con_saldo_inicial_cargado")
+    def listar_unidades_con_saldo_inicial_cargado(self, condominio_id: int) -> list[dict]:
+        """
+        Unidades con saldo inicial distinto de cero o marcadas para revisión
+        (misma noción de “cargado” que el resumen del módulo).
+        """
+        rows = (
+            self.client.table(self._tab)
+            .select(
+                "id, codigo, numero, saldo, saldo_inicial_bs, meses_sin_pagar, "
+                "primer_periodo, requiere_revision, propietarios(nombre)"
+            )
+            .eq("condominio_id", int(condominio_id))
+            .order("codigo")
+            .execute()
+        ).data or []
+        out: list[dict] = []
+        for r in rows:
+            s_ini = float(r.get("saldo_inicial_bs") or 0)
+            if s_ini == 0 and not bool(r.get("requiere_revision")):
+                continue
+            p = r.get("propietarios") or {}
+            nom = (p.get("nombre") if isinstance(p, dict) else None) or "—"
+            cod = (r.get("codigo") or r.get("numero") or "").strip() or str(r.get("id"))
+            out.append(
+                {
+                    "id": int(r["id"]),
+                    "codigo": cod,
+                    "propietario_nombre": nom,
+                    "saldo": float(r.get("saldo") or 0),
+                    "saldo_inicial_bs": s_ini,
+                    "meses_sin_pagar": int(r.get("meses_sin_pagar") or 0),
+                    "primer_periodo": r.get("primer_periodo"),
+                    "requiere_revision": bool(r.get("requiere_revision")),
+                }
+            )
+        return out
+
     @safe_db_operation("saldo_inicial.actualizar_saldo_manual")
     def actualizar_saldo_manual(
         self,
@@ -287,9 +325,29 @@ class SaldoInicialRepository:
         saldo_bs: float,
         nota: str,
     ) -> dict:
+        """
+        Corrige saldo inicial y ajusta el saldo operativo por la **diferencia**
+        (mantiene coherencia si ya hubo pagos o cierres de mes).
+        """
+        cur = (
+            self.client.table(self._tab)
+            .select("id, saldo, saldo_inicial_bs")
+            .eq("id", int(unidad_id))
+            .limit(1)
+            .execute()
+        ).data or []
+        if not cur:
+            raise DatabaseError("Unidad no encontrada.")
+
+        viejo_si = float(cur[0].get("saldo_inicial_bs") or 0)
+        saldo_op = float(cur[0].get("saldo") or 0)
+        nuevo_si = round(float(saldo_bs), 2)
+        delta = nuevo_si - viejo_si
+        nuevo_op = round(saldo_op + delta, 2)
+
         payload = {
-            "saldo": round(float(saldo_bs), 2),
-            "saldo_inicial_bs": round(float(saldo_bs), 2),
+            "saldo_inicial_bs": nuevo_si,
+            "saldo": nuevo_op,
             "requiere_revision": False,
             "nota_revision": (nota or "").strip() or None,
         }
