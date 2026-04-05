@@ -840,6 +840,70 @@ with tab_conciliacion:
                 st.success("✅ Sin alertas pendientes")
 
             st.divider()
+            st.subheader("🪪 Conciliación automática por cédula (movimientos ya importados)")
+            st.caption(
+                "Lee la **descripción** guardada en cada movimiento. Solo aplica a **ingresos** "
+                "del período de arriba que **aún no estén conciliados**; crea pagos y marca el "
+                "movimiento sin volver a subir el Excel."
+            )
+            if st.button(
+                "Ejecutar conciliación por cédula en movimientos existentes",
+                type="primary",
+                key="btn_conciliar_cedula_movimientos_existentes",
+            ):
+                try:
+                    ing_cedula = repo_mov.get_by_tipo(
+                        condominio_id, periodo_db_conc, "ingreso"
+                    )
+                except DatabaseError as e:
+                    st.error(f"❌ {e}")
+                    ing_cedula = []
+                candidatos = [r for r in ing_cedula if not r.get("conciliado")]
+                if not candidatos:
+                    st.info(
+                        "No hay ingresos pendientes de conciliar en este período. "
+                        "Si acabas de importar, verifica el **período a conciliar (MM/YYYY)**."
+                    )
+                else:
+                    periodo_ym_ced = periodo_db_conc[:7]
+                    movs_con_pago = 0
+                    total_pagos = 0
+                    with st.spinner(
+                        f"Procesando {len(candidatos)} ingreso(s) por cédula en descripción…"
+                    ):
+                        for r in candidatos:
+                            movimiento_dict = {
+                                "id": int(r["id"]),
+                                "descripcion": r.get("descripcion") or "",
+                                "monto_bs": float(r.get("monto_bs") or 0),
+                                "tipo": "ingreso",
+                                "referencia": r.get("referencia") or "",
+                                "fecha": str(r.get("fecha") or "")[:10],
+                            }
+                            res = procesar_conciliacion_automatica(
+                                movimiento=movimiento_dict,
+                                condominio_id=int(condominio_id),
+                                periodo=periodo_ym_ced,
+                            )
+                            pr = int(res.get("pagos_registrados") or 0)
+                            if pr > 0:
+                                total_pagos += pr
+                                movs_con_pago += 1
+                    if movs_con_pago > 0:
+                        st.success(
+                            f"✅ **{movs_con_pago}** movimiento(s) conciliado(s) con pago(s) "
+                            f"automático(s); **{total_pagos}** registro(s) en **Pagos** en total "
+                            f"(una cédula en varias unidades genera un pago por unidad)."
+                        )
+                        st.rerun()
+                    else:
+                        st.warning(
+                            "No se registró ningún pago automático. "
+                            "Compruebe que la descripción incluya la cédula (V/E/J/G…), "
+                            "que exista el propietario en el condominio y que la unidad esté vinculada."
+                        )
+
+            st.divider()
             st.subheader("Movimientos por conciliar")
 
             try:
