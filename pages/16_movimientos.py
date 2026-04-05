@@ -82,9 +82,14 @@ render_breadcrumb("Movimientos Bancarios")
 
 condominio_id = require_condominio()
 
+# Bump cuando cambie la firma/lógica de los repos; si no, Streamlit puede seguir
+# usando instancias cacheadas viejas (p. ej. métodos con @safe_db_operation obsoleto).
+_REPOS_CACHE_KEY = 3
+
 
 @st.cache_resource
-def get_repos():
+def get_repos(_snap: int = _REPOS_CACHE_KEY):
+    _ = _snap  # forma parte de la clave de caché; subir _REPOS_CACHE_KEY al cambiar repos
     client = get_supabase_client()
     return (
         MovimientoRepository(client),
@@ -973,6 +978,13 @@ with tab_conciliacion:
                 )
             except DatabaseError as e:
                 st.error(f"❌ {e}")
+                pagos_auto = []
+            except Exception:
+                st.warning(
+                    "No se pudo cargar la tabla de pagos automáticos por cédula. "
+                    "Recarga la página. Si el error continúa, revise permisos RLS en Supabase "
+                    "para `pagos` / `movimientos` / `unidades`."
+                )
                 pagos_auto = []
 
             if not pagos_auto:
