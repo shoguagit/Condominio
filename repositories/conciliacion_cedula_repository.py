@@ -241,7 +241,7 @@ class ConciliacionCedulaRepository:
             self.client.table("pagos")
             .select(
                 "id, fecha_pago, monto_bs, tipo_pago, estado, referencia, movimiento_id, "
-                "unidades(codigo, numero)"
+                "unidades(codigo)"
             )
             .eq("condominio_id", int(condominio_id))
             .eq("periodo", p)
