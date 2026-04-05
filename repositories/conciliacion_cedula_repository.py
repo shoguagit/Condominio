@@ -100,7 +100,7 @@ class ConciliacionCedulaRepository:
         cedulas_buscar = _cedulas_valores_para_in(cedulas)
         props: list[dict] = []
         if cedulas_buscar:
-            props = (
+            props_raw = (
                 self.client.table("propietarios")
                 .select("id, nombre, cedula")
                 .eq("condominio_id", int(condominio_id))
@@ -108,6 +108,10 @@ class ConciliacionCedulaRepository:
                 .in_("cedula", cedulas_buscar)
                 .execute()
             ).data or []
+            # .in_ usa variantes (V+número vs solo número); filtrar a equivalencia real con la cédula del banco.
+            props = [
+                p for p in props_raw if _cedula_coincide_lista(cedulas, p.get("cedula"))
+            ]
 
         if not props:
             all_p = (
