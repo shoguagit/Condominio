@@ -2,11 +2,15 @@
 
 from __future__ import annotations
 
+import logging
+
 from config.supabase_client import get_supabase_client
 from repositories.conciliacion_cedula_repository import ConciliacionCedulaRepository
 from utils.cedula_extractor import clasificar_pago, extraer_cedulas
 from utils.sincronizar_estado_pago_unidad import sincronizar_estado_pago_unidad
 from utils.supabase_compat import json_safe_periodo
+
+logger = logging.getLogger(__name__)
 
 
 def _periodo_fecha_db(periodo: str) -> str:
@@ -34,7 +38,16 @@ def procesar_conciliacion_automatica(
         "motivo_omision": None,
     }
     try:
+        _desc = str(movimiento.get("descripcion") or "")[:50]
+        logger.warning(
+            "CONC_AUTO: procesando movimiento %s tipo=%s desc=%s",
+            movimiento.get("id"),
+            movimiento.get("tipo"),
+            _desc,
+        )
+
         if (movimiento.get("tipo") or "").lower() != "ingreso":
+            logger.warning("CONC_AUTO: omitido por: no_ingreso")
             return {
                 **vacio,
                 "motivo_omision": "no_ingreso",
@@ -42,6 +55,7 @@ def procesar_conciliacion_automatica(
 
         mid = movimiento.get("id")
         if mid is None:
+            logger.warning("CONC_AUTO: omitido por: sin_id_movimiento")
             return {**vacio, "motivo_omision": "sin_id_movimiento"}
 
         client = get_supabase_client()
@@ -63,6 +77,7 @@ def procesar_conciliacion_automatica(
             tasa = 1.0
 
         if repo.movimiento_ya_conciliado(int(mid)):
+            logger.warning("CONC_AUTO: omitido por: ya_conciliado")
             return {
                 **vacio,
                 "motivo_omision": "ya_conciliado",
@@ -71,7 +86,9 @@ def procesar_conciliacion_automatica(
 
         texto = movimiento.get("descripcion") or ""
         cedulas = extraer_cedulas(str(texto))
+        logger.warning("CONC_AUTO: cédulas encontradas: %s", cedulas)
         if not cedulas:
+            logger.warning("CONC_AUTO: omitido por: sin_cedula")
             return {
                 **vacio,
                 "cedulas_encontradas": [],
@@ -79,7 +96,9 @@ def procesar_conciliacion_automatica(
             }
 
         unidades = repo.buscar_unidades_por_cedula(cedulas, int(condominio_id))
+        logger.warning("CONC_AUTO: unidades encontradas: %s", unidades)
         if not unidades:
+            logger.warning("CONC_AUTO: omitido por: sin_coincidencia")
             return {
                 **vacio,
                 "cedulas_encontradas": cedulas,
@@ -130,6 +149,9 @@ def procesar_conciliacion_automatica(
         if first_pago_id is not None and pagos_nuevos > 0:
             repo.marcar_movimiento_conciliado(int(mid), first_pago_id)
 
+        if pagos_nuevos <= 0:
+            logger.warning("CONC_AUTO: omitido por: sin_pago_nuevo")
+
         return {
             "procesado": pagos_nuevos > 0,
             "cedulas_encontradas": cedulas,
@@ -139,6 +161,7 @@ def procesar_conciliacion_automatica(
             "motivo_omision": None if pagos_nuevos > 0 else "sin_pago_nuevo",
         }
     except Exception:
+        logger.warning("CONC_AUTO: omitido por: error_interno", exc_info=True)
         return {
             **vacio,
             "motivo_omision": "error_interno",
