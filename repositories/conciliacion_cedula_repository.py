@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
+import logging
 import re
 
 from supabase import Client
 
 from utils.error_handler import DatabaseError, safe_db_operation
 from utils.supabase_compat import json_safe_date
+
+logger = logging.getLogger(__name__)
 
 
 def _normalize_ced(s: str) -> str:
@@ -224,7 +227,6 @@ class ConciliacionCedulaRepository:
         ).data or []
         return bool(rows and rows[0].get("conciliado"))
 
-    @safe_db_operation("conciliacion_cedula.listar_pagos_automaticos_periodo")
     def listar_pagos_automaticos_periodo(
         self,
         condominio_id: int,
@@ -234,65 +236,80 @@ class ConciliacionCedulaRepository:
         """
         Pagos automáticos por cédula en el período.
 
-        - Sin embeds en `pagos` (evita errores PostgREST si la FK/embed no está en caché).
-        - No filtra `origen` en SQL: si la columna aún no existe, no rompe; se filtra en Python.
+        Sin embeds; filtro `origen` en Python. Si Supabase/RLS falla, devuelve []
+        y registra el error (no usa @safe_db_operation para no tumbar la página).
         """
-        p = json_safe_date(periodo_db)[:10]
-        rows = (
-            self.client.table("pagos")
-            .select("*")
-            .eq("condominio_id", int(condominio_id))
-            .eq("periodo", p)
-            .order("fecha_pago", desc=True)
-            .execute()
-        ).data or []
+        try:
+            p = json_safe_date(periodo_db)[:10]
+            rows = (
+                self.client.table("pagos")
+                .select("*")
+                .eq("condominio_id", int(condominio_id))
+                .eq("periodo", p)
+                .execute()
+            ).data or []
 
-        rows = [
-            r
-            for r in rows
-            if (r.get("origen") or "") == "conciliacion_automatica"
-            and r.get("movimiento_id")
-        ]
+            rows = [
+                r
+                for r in rows
+                if (r.get("origen") or "") == "conciliacion_automatica"
+                and r.get("movimiento_id")
+            ]
 
-        out = list(rows)
-        if tipo_filtro and tipo_filtro != "Todos":
-            out = [r for r in out if (r.get("tipo_pago") or "") == tipo_filtro]
+            def _fp_key(rec: dict) -> str:
+                fp = rec.get("fecha_pago")
+                return str(fp or "")[:10]
 
-        chunk = 80
-        mids = sorted({int(r["movimiento_id"]) for r in out if r.get("movimiento_id")})
-        mov_by_id: dict[int, dict] = {}
-        if mids:
-            for i in range(0, len(mids), chunk):
-                part = mids[i : i + chunk]
-                mrows = (
-                    self.client.table("movimientos")
-                    .select("id, fecha, referencia, descripcion, conciliado")
-                    .in_("id", part)
-                    .execute()
-                ).data or []
-                for m in mrows:
-                    if m.get("id") is not None:
-                        mov_by_id[int(m["id"])] = m
+            rows.sort(key=_fp_key, reverse=True)
 
-        uids = sorted({int(r["unidad_id"]) for r in out if r.get("unidad_id")})
-        uni_by_id: dict[int, dict] = {}
-        if uids:
-            for i in range(0, len(uids), chunk):
-                part = uids[i : i + chunk]
-                urows = (
-                    self.client.table("unidades")
-                    .select("id, codigo")
-                    .in_("id", part)
-                    .execute()
-                ).data or []
-                for u in urows:
-                    if u.get("id") is not None:
-                        uni_by_id[int(u["id"])] = u
+            out = list(rows)
+            if tipo_filtro and tipo_filtro != "Todos":
+                out = [r for r in out if (r.get("tipo_pago") or "") == tipo_filtro]
 
-        for r in out:
-            mid = r.get("movimiento_id")
-            r["movimientos"] = mov_by_id.get(int(mid)) if mid is not None else {}
-            uid = r.get("unidad_id")
-            r["unidades"] = uni_by_id.get(int(uid)) if uid is not None else {}
+            chunk = 80
+            mids = sorted(
+                {int(r["movimiento_id"]) for r in out if r.get("movimiento_id")}
+            )
+            mov_by_id: dict[int, dict] = {}
+            if mids:
+                for i in range(0, len(mids), chunk):
+                    part = mids[i : i + chunk]
+                    mrows = (
+                        self.client.table("movimientos")
+                        .select("id, fecha, referencia, descripcion, conciliado")
+                        .in_("id", part)
+                        .execute()
+                    ).data or []
+                    for m in mrows:
+                        if m.get("id") is not None:
+                            mov_by_id[int(m["id"])] = m
 
-        return out
+            uids = sorted({int(r["unidad_id"]) for r in out if r.get("unidad_id")})
+            uni_by_id: dict[int, dict] = {}
+            if uids:
+                for i in range(0, len(uids), chunk):
+                    part = uids[i : i + chunk]
+                    urows = (
+                        self.client.table("unidades")
+                        .select("id, codigo")
+                        .in_("id", part)
+                        .execute()
+                    ).data or []
+                    for u in urows:
+                        if u.get("id") is not None:
+                            uni_by_id[int(u["id"])] = u
+
+            for r in out:
+                mid = r.get("movimiento_id")
+                r["movimientos"] = mov_by_id.get(int(mid)) if mid is not None else {}
+                uid = r.get("unidad_id")
+                r["unidades"] = uni_by_id.get(int(uid)) if uid is not None else {}
+
+            return out
+        except Exception as e:
+            logger.warning(
+                "conciliacion_cedula.listar_pagos_automaticos_periodo: %s",
+                e,
+                exc_info=True,
+            )
+            return []
