@@ -232,32 +232,36 @@ class ConciliacionCedulaRepository:
         tipo_filtro: str | None = None,
     ) -> list[dict]:
         """
-        Pagos con origen conciliacion_automatica y movimiento vinculado.
-        No usa embed `movimientos(...)` (PostgREST a veces no expone la FK hasta
-        recargar esquema); carga movimientos en un segundo SELECT por ids.
+        Pagos automáticos por cédula en el período.
+
+        - Sin embeds en `pagos` (evita errores PostgREST si la FK/embed no está en caché).
+        - No filtra `origen` en SQL: si la columna aún no existe, no rompe; se filtra en Python.
         """
         p = json_safe_date(periodo_db)[:10]
         rows = (
             self.client.table("pagos")
-            .select(
-                "id, fecha_pago, monto_bs, tipo_pago, estado, referencia, movimiento_id, "
-                "unidades(codigo)"
-            )
+            .select("*")
             .eq("condominio_id", int(condominio_id))
             .eq("periodo", p)
-            .eq("origen", "conciliacion_automatica")
             .order("fecha_pago", desc=True)
             .execute()
         ).data or []
 
-        out = [r for r in rows if r.get("movimiento_id")]
+        rows = [
+            r
+            for r in rows
+            if (r.get("origen") or "") == "conciliacion_automatica"
+            and r.get("movimiento_id")
+        ]
+
+        out = list(rows)
         if tipo_filtro and tipo_filtro != "Todos":
             out = [r for r in out if (r.get("tipo_pago") or "") == tipo_filtro]
 
+        chunk = 80
         mids = sorted({int(r["movimiento_id"]) for r in out if r.get("movimiento_id")})
         mov_by_id: dict[int, dict] = {}
         if mids:
-            chunk = 80
             for i in range(0, len(mids), chunk):
                 part = mids[i : i + chunk]
                 mrows = (
@@ -270,8 +274,25 @@ class ConciliacionCedulaRepository:
                     if m.get("id") is not None:
                         mov_by_id[int(m["id"])] = m
 
+        uids = sorted({int(r["unidad_id"]) for r in out if r.get("unidad_id")})
+        uni_by_id: dict[int, dict] = {}
+        if uids:
+            for i in range(0, len(uids), chunk):
+                part = uids[i : i + chunk]
+                urows = (
+                    self.client.table("unidades")
+                    .select("id, codigo")
+                    .in_("id", part)
+                    .execute()
+                ).data or []
+                for u in urows:
+                    if u.get("id") is not None:
+                        uni_by_id[int(u["id"])] = u
+
         for r in out:
             mid = r.get("movimiento_id")
             r["movimientos"] = mov_by_id.get(int(mid)) if mid is not None else {}
+            uid = r.get("unidad_id")
+            r["unidades"] = uni_by_id.get(int(uid)) if uid is not None else {}
 
         return out
