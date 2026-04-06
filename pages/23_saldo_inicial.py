@@ -19,7 +19,17 @@ import pandas as pd
 from components.header import render_header
 from config.supabase_client import get_supabase_client
 from repositories.saldo_inicial_repository import SaldoInicialRepository
-from utils.auth import check_authentication, is_admin, require_condominio
+from utils.auth import check_authentication, require_condominio
+
+try:
+    from utils.auth import is_admin
+except ImportError:  # despliegues con auth.py anterior (sin is_admin en utils.auth)
+
+    def is_admin() -> bool:
+        r = st.session_state.get("user_role", "operador")
+        if r == "consulta":
+            r = "operador"
+        return r == "admin"
 from utils.error_handler import DatabaseError
 from utils.parser_historico import (
     detectar_formato_excel,
