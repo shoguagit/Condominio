@@ -301,11 +301,14 @@ if egresos_list:
         cd1, cd2 = st.columns(2)
         if cd2.button("Sí, eliminar todos", type="primary", key="btn_del_todos_confirm"):
             try:
-                repo_mov.delete_egresos_periodo(condominio_id, periodo_db)
+                # Llamada directa al cliente para evitar problema de caché de repo
+                get_supabase_client().table("movimientos").delete().eq(
+                    "condominio_id", condominio_id
+                ).eq("periodo", periodo_db).eq("tipo", "egreso").execute()
                 st.session_state.pop("_confirmar_del_todos", None)
                 st.session_state["_flash_gastos_todos_del"] = True
                 st.rerun()
-            except DatabaseError as e:
+            except Exception as e:
                 st.error(f"❌ {e}")
         if cd1.button("Cancelar", key="btn_del_todos_cancel"):
             st.session_state.pop("_confirmar_del_todos", None)
