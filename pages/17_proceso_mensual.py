@@ -293,7 +293,7 @@ if egresos_list:
             st.session_state["_confirmar_del_todos"] = True
             st.rerun()
 
-    if st.session_state.pop("_confirmar_del_todos", False) and not cerrado:
+    if st.session_state.get("_confirmar_del_todos") and not cerrado:
         st.warning(
             f"⚠️ ¿Eliminar los **{len(egresos_list)} gastos** del período "
             f"(Bs. {total_eg:,.2f})? Esta acción no se puede deshacer."
@@ -302,11 +302,13 @@ if egresos_list:
         if cd2.button("Sí, eliminar todos", type="primary", key="btn_del_todos_confirm"):
             try:
                 repo_mov.delete_egresos_periodo(condominio_id, periodo_db)
+                st.session_state.pop("_confirmar_del_todos", None)
                 st.session_state["_flash_gastos_todos_del"] = True
                 st.rerun()
             except DatabaseError as e:
                 st.error(f"❌ {e}")
         if cd1.button("Cancelar", key="btn_del_todos_cancel"):
+            st.session_state.pop("_confirmar_del_todos", None)
             st.rerun()
 
     hc = [3, 1, 1] + ([1, 1] if not cerrado else [])
