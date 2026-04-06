@@ -143,6 +143,8 @@ if st.session_state.pop("_flash_gasto_ok", False):
     st.success("✅ Gasto guardado.")
 if st.session_state.pop("_flash_gasto_del", False):
     st.success("✅ Gasto eliminado.")
+if st.session_state.pop("_flash_gastos_todos_del", False):
+    st.success("✅ Todos los gastos del período fueron eliminados.")
 if st.session_state.pop("_flash_cuotas_reset", False):
     st.success("✅ Cuotas eliminadas. El período volvió a estado borrador.")
 
@@ -275,9 +277,38 @@ if egresos_list:
     total_eg = round(sum(float(e.get("monto_bs") or 0) for e in egresos_list), 2)
     total_usd_eg = round(total_eg / _tasa_g, 2) if _tasa_g > 0 else 0.0
     usd_label = f" ≈ USD {total_usd_eg:,.2f}" if _tasa_g > 0 else ""
-    st.markdown(
+
+    sum_col, btn_col = st.columns([3, 1])
+    sum_col.markdown(
         f"**{len(egresos_list)} concepto(s) — Total: Bs. {total_eg:,.2f}{usd_label}**"
     )
+    if not cerrado:
+        if btn_col.button(
+            "🗑️ Eliminar todos",
+            key="btn_del_todos_gastos",
+            help="Borra todos los gastos de este período de una vez",
+            type="secondary",
+            use_container_width=True,
+        ):
+            st.session_state["_confirmar_del_todos"] = True
+            st.rerun()
+
+    if st.session_state.pop("_confirmar_del_todos", False) and not cerrado:
+        st.warning(
+            f"⚠️ ¿Eliminar los **{len(egresos_list)} gastos** del período "
+            f"(Bs. {total_eg:,.2f})? Esta acción no se puede deshacer."
+        )
+        cd1, cd2 = st.columns(2)
+        if cd2.button("Sí, eliminar todos", type="primary", key="btn_del_todos_confirm"):
+            try:
+                repo_mov.delete_egresos_periodo(condominio_id, periodo_db)
+                st.session_state["_flash_gastos_todos_del"] = True
+                st.rerun()
+            except DatabaseError as e:
+                st.error(f"❌ {e}")
+        if cd1.button("Cancelar", key="btn_del_todos_cancel"):
+            st.rerun()
+
     hc = [3, 1, 1] + ([1, 1] if not cerrado else [])
     h_cols = st.columns(hc)
     h_cols[0].markdown("**Concepto**")

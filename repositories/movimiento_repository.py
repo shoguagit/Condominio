@@ -99,3 +99,16 @@ class MovimientoRepository:
         self.client.table(self.table).delete().eq("id", id).execute()
         return True
 
+    @safe_db_operation("movimiento.delete_egresos_periodo")
+    def delete_egresos_periodo(self, condominio_id: int, periodo: str) -> int:
+        """Elimina todos los egresos de un período. Devuelve cantidad eliminada."""
+        resp = (
+            self.client.table(self.table)
+            .delete()
+            .eq("condominio_id", condominio_id)
+            .eq("periodo", periodo)
+            .eq("tipo", "egreso")
+            .execute()
+        )
+        return len(resp.data or [])
+
