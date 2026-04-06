@@ -139,6 +139,181 @@ if st.session_state.pop("_flash_cobro_ext_del", False):
     st.success("✅ Cobro extraordinario anulado.")
 if st.session_state.pop("_flash_cobro_ext_err", False):
     st.error(str(st.session_state.pop("_flash_cobro_ext_err_msg", "No se pudo completar la acción.")))
+if st.session_state.pop("_flash_gasto_ok", False):
+    st.success("✅ Gasto guardado.")
+if st.session_state.pop("_flash_gasto_del", False):
+    st.success("✅ Gasto eliminado.")
+if st.session_state.pop("_flash_cuotas_reset", False):
+    st.success("✅ Cuotas eliminadas. El período volvió a estado borrador.")
+
+# ── GASTOS DEL PERÍODO ─────────────────────────────────────────────
+st.markdown("### 📋 Gastos del período")
+st.caption(
+    "Registre los gastos del mes uno a uno. "
+    "El total se recoge automáticamente con el botón **Usar gasto real del período**."
+)
+
+# Tasa para mostrar equivalente USD en la lista
+_tasa_g = float(st.session_state.get("tasa_cambio") or 0)
+if _tasa_g <= 0:
+    try:
+        _co_g = repo_cond.get_by_id(condominio_id)
+        _tasa_g = float((_co_g or {}).get("tasa_cambio") or 0)
+    except DatabaseError:
+        _tasa_g = 0.0
+
+try:
+    egresos_list = repo_mov.get_by_tipo(condominio_id, periodo_db, "egreso")
+except DatabaseError:
+    egresos_list = []
+
+_edit_gasto_id = st.session_state.get("_edit_gasto_id")
+
+# ── formulario EDITAR (si hay uno seleccionado) ──
+if _edit_gasto_id and not cerrado:
+    _eg_edit = next(
+        (e for e in egresos_list if str(e.get("id")) == str(_edit_gasto_id)), None
+    )
+    if _eg_edit:
+        st.info(f"✏️ Editando: **{_eg_edit.get('descripcion') or '—'}**")
+        with st.form("form_edit_gasto"):
+            ec1, ec2 = st.columns([3, 1])
+            with ec1:
+                edit_desc = st.text_input(
+                    "Descripción *", value=_eg_edit.get("descripcion") or ""
+                )
+            with ec2:
+                edit_monto = st.number_input(
+                    "Monto (Bs.) *",
+                    min_value=0.01,
+                    value=max(0.01, float(_eg_edit.get("monto_bs") or 0.01)),
+                    step=0.01,
+                    format="%.2f",
+                )
+            bc1, bc2 = st.columns(2)
+            with bc1:
+                guardar_edit = st.form_submit_button(
+                    "💾 Guardar cambios", use_container_width=True
+                )
+            with bc2:
+                cancelar_edit = st.form_submit_button(
+                    "✕ Cancelar", use_container_width=True
+                )
+        if guardar_edit:
+            if not edit_desc.strip():
+                st.error("❌ La descripción es obligatoria.")
+            else:
+                _usd_e = round(float(edit_monto) / _tasa_g, 4) if _tasa_g > 0 else 0.0
+                try:
+                    repo_mov.update(
+                        int(_edit_gasto_id),
+                        {
+                            "descripcion": edit_desc.strip(),
+                            "monto_bs": float(edit_monto),
+                            "monto_usd": _usd_e,
+                            "tasa_cambio": _tasa_g,
+                        },
+                    )
+                    st.session_state.pop("_edit_gasto_id", None)
+                    st.session_state["_flash_gasto_ok"] = True
+                    st.rerun()
+                except DatabaseError as e:
+                    st.error(f"❌ {e}")
+        if cancelar_edit:
+            st.session_state.pop("_edit_gasto_id", None)
+            st.rerun()
+    else:
+        st.session_state.pop("_edit_gasto_id", None)
+
+# ── formulario AGREGAR ──
+if not cerrado and not _edit_gasto_id:
+    with st.form("form_add_gasto", clear_on_submit=True):
+        ac1, ac2 = st.columns([3, 1])
+        with ac1:
+            add_desc = st.text_input(
+                "Descripción / Concepto *",
+                placeholder="Ej: Nómina Gerente, Agua Corpoelec, Mantenimiento…",
+            )
+        with ac2:
+            add_monto = st.number_input(
+                "Monto (Bs.) *",
+                min_value=0.01,
+                value=0.01,
+                step=0.01,
+                format="%.2f",
+            )
+        add_submitted = st.form_submit_button(
+            "➕ Agregar gasto", use_container_width=True
+        )
+        if add_submitted:
+            if not add_desc.strip():
+                st.error("❌ La descripción es obligatoria.")
+            else:
+                _usd_a = round(float(add_monto) / _tasa_g, 4) if _tasa_g > 0 else 0.0
+                try:
+                    repo_mov.create(
+                        {
+                            "condominio_id": condominio_id,
+                            "periodo": periodo_db,
+                            "fecha": periodo_db,
+                            "descripcion": add_desc.strip(),
+                            "tipo": "egreso",
+                            "monto_bs": float(add_monto),
+                            "monto_usd": _usd_a,
+                            "tasa_cambio": _tasa_g,
+                            "fuente": "manual",
+                            "estado": "pendiente",
+                        }
+                    )
+                    st.session_state["_flash_gasto_ok"] = True
+                    st.rerun()
+                except DatabaseError as e:
+                    st.error(f"❌ {e}")
+
+# ── lista de gastos ──
+if egresos_list:
+    total_eg = round(sum(float(e.get("monto_bs") or 0) for e in egresos_list), 2)
+    total_usd_eg = round(total_eg / _tasa_g, 2) if _tasa_g > 0 else 0.0
+    usd_label = f" ≈ USD {total_usd_eg:,.2f}" if _tasa_g > 0 else ""
+    st.markdown(
+        f"**{len(egresos_list)} concepto(s) — Total: Bs. {total_eg:,.2f}{usd_label}**"
+    )
+    hc = [3, 1, 1] + ([1, 1] if not cerrado else [])
+    h_cols = st.columns(hc)
+    h_cols[0].markdown("**Concepto**")
+    h_cols[1].markdown("**Bs.**")
+    h_cols[2].markdown("**USD**")
+    if not cerrado:
+        h_cols[3].markdown("**Editar**")
+        h_cols[4].markdown("**Eliminar**")
+    for eg in egresos_list:
+        mbs = float(eg.get("monto_bs") or 0)
+        musd = float(eg.get("monto_usd") or 0) or (
+            round(mbs / _tasa_g, 2) if _tasa_g > 0 else 0.0
+        )
+        r_cols = st.columns(hc)
+        r_cols[0].write(eg.get("descripcion") or "—")
+        r_cols[1].write(f"{mbs:,.2f}")
+        r_cols[2].write(f"{musd:,.2f}")
+        if not cerrado:
+            if r_cols[3].button("✏️", key=f"edit_g_{eg['id']}", help="Editar"):
+                st.session_state["_edit_gasto_id"] = eg["id"]
+                st.rerun()
+            if r_cols[4].button("🗑️", key=f"del_g_{eg['id']}", help="Eliminar"):
+                try:
+                    repo_mov.delete(int(eg["id"]))
+                    st.session_state["_flash_gasto_del"] = True
+                    st.rerun()
+                except DatabaseError as e:
+                    st.error(f"❌ {e}")
+    st.caption(
+        "⬆️ Cuando termine de ingresar todos los gastos, use **Usar gasto real del período** "
+        "para establecer ese total como presupuesto y luego genere las cuotas."
+    )
+else:
+    st.caption("No hay gastos registrados para este período.")
+
+st.divider()
 
 st.markdown("### Presupuesto del mes")
 st.caption(
@@ -404,6 +579,27 @@ if hay_cuotas and not cerrado:
         value=False,
         key="chk_regenerar_cuotas",
     )
+
+# Botón para deshacer una generación de cuotas accidental
+if hay_cuotas and not cerrado:
+    with st.expander("⚠️ Deshacer cuotas generadas (reiniciar período)", expanded=False):
+        st.warning(
+            "Elimina **todas las cuotas** de este período y devuelve el proceso a estado "
+            "**borrador**. Útil si se generaron cuotas con datos incorrectos. "
+            "Los gastos registrados y el presupuesto **no se borran**."
+        )
+        if st.button(
+            "🔄 Eliminar cuotas y volver a borrador",
+            key="btn_reset_cuotas",
+            type="secondary",
+        ):
+            try:
+                repo_proc.delete_cuotas_for_proceso(int(proceso["id"]))
+                repo_proc.update(int(proceso["id"]), {"estado": "borrador"})
+                st.session_state["_flash_cuotas_reset"] = True
+                st.rerun()
+            except DatabaseError as e:
+                st.error(f"❌ {e}")
 
 gen_disabled = cerrado or not puede_generar_cuotas(estado_proc)
 if st.button("Generar cuotas", type="primary", use_container_width=True, disabled=gen_disabled):
