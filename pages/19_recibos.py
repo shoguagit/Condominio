@@ -14,6 +14,7 @@ from repositories.proceso_repository import ProcesoMensualRepository
 from utils.auth import check_authentication, require_condominio
 from utils.error_handler import DatabaseError
 from utils.validators import validate_periodo, periodo_to_date_str
+from utils.recibo_pdf import preparar_datos_recibo, generar_recibos_pdf
 from components.header import render_header
 from components.breadcrumb import render_breadcrumb
 
@@ -183,6 +184,59 @@ cond_email   = (condominio.get("email") or "").strip()
 fecha_emision = date.today().strftime("%d-%m-%Y")
 
 
+# ── Helpers para generación de PDF ────────────────────────────────
+def _cargar_logo_bytes() -> bytes | None:
+    """Carga el logo del condominio desde Supabase Storage si está disponible."""
+    try:
+        logo_url = condominio.get("logo_url") or ""
+        if not logo_url:
+            return None
+        import httpx
+        r = httpx.get(logo_url, timeout=5)
+        if r.status_code == 200:
+            return r.content
+    except Exception:
+        pass
+    return None
+
+
+def _preparar_datos_pdf(unidad: dict) -> dict:
+    uid = unidad.get("id")
+    cuota_row = cuotas_por_unidad.get(uid)
+    indiviso_pct = float(unidad.get("indiviso_pct") or 0)
+    alicuota = indiviso_pct / 100.0
+
+    if cuota_row:
+        cuota_mes_bs  = float(cuota_row.get("cuota_calculada_bs") or 0)
+        saldo_ant_bs  = float(cuota_row.get("saldo_anterior_bs")  or unidad.get("saldo") or 0)
+    else:
+        cuota_mes_bs  = round(total_relacionado_bs * alicuota, 2)
+        saldo_ant_bs  = float(unidad.get("saldo") or 0)
+
+    cuota_mes_usd = round(total_relacionado_usd * alicuota, 4)
+    saldo_nuevo   = round(saldo_ant_bs + cuota_mes_bs, 2)
+
+    return preparar_datos_recibo(
+        condominio=condominio,
+        unidad=unidad,
+        mes_nombre=mes_nombre,
+        anio=anio,
+        lineas_gasto=lineas,
+        total_gastos_bs=total_gastos_bs,
+        total_gastos_usd=total_gastos_usd,
+        fondo_reserva_bs=fondo_reserva_bs,
+        fondo_reserva_usd=fondo_reserva_usd,
+        total_relacionado_bs=total_relacionado_bs,
+        total_relacionado_usd=total_relacionado_usd,
+        cuota_mes_bs=cuota_mes_bs,
+        cuota_mes_usd=cuota_mes_usd,
+        saldo_anterior_bs=saldo_ant_bs,
+        pagos_mes_bs=0.0,
+        saldo_nuevo_bs=saldo_nuevo,
+        meses_acum=1,
+    )
+
+
 # ── Render por unidad ──────────────────────────────────────────────
 def render_recibo(unidad: dict) -> None:
     uid          = unidad.get("id")
@@ -281,6 +335,47 @@ def render_recibo(unidad: dict) -> None:
         """
     )
 
+    # ── Botón descarga PDF individual ─────────────────────────────
+    try:
+        datos_pdf = _preparar_datos_pdf(unidad)
+        pdf_bytes = generar_recibos_pdf([datos_pdf], logo_bytes=None)
+        nombre_pdf = f"Recibo_{codigo}_{mes_nombre}_{anio}.pdf"
+        st.download_button(
+            label="⬇️ Descargar recibo PDF",
+            data=pdf_bytes,
+            file_name=nombre_pdf,
+            mime="application/pdf",
+            key=f"dl_pdf_{uid}",
+        )
+    except Exception as e:
+        st.warning(f"No se pudo generar PDF para {codigo}: {e}")
+
+
+# ── Botón "Descargar todos los recibos" (visible antes de los recibos) ───
+if unidades_a_mostrar:
+    st.markdown("---")
+    col_dl, _ = st.columns([2, 5])
+    with col_dl:
+        if st.button("📄 Generar PDF con todos los recibos", type="primary"):
+            with st.spinner("Generando PDF..."):
+                try:
+                    todos_datos = [_preparar_datos_pdf(u) for u in unidades_a_mostrar]
+                    pdf_todos   = generar_recibos_pdf(todos_datos, logo_bytes=None)
+                    st.session_state["_pdf_todos_bytes"] = pdf_todos
+                    st.session_state["_pdf_todos_nombre"] = (
+                        f"Recibos_{mes_nombre}_{anio}.pdf"
+                    )
+                except Exception as e:
+                    st.error(f"❌ Error generando PDF masivo: {e}")
+
+    if st.session_state.get("_pdf_todos_bytes"):
+        st.download_button(
+            label="⬇️ Descargar todos los recibos (PDF)",
+            data=st.session_state["_pdf_todos_bytes"],
+            file_name=st.session_state.get("_pdf_todos_nombre", "Recibos.pdf"),
+            mime="application/pdf",
+            key="dl_pdf_todos",
+        )
 
 for u in unidades_a_mostrar:
     render_recibo(u)
