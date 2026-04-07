@@ -349,6 +349,181 @@ if egresos_list:
 else:
     st.caption("No hay gastos registrados para este período.")
 
+# ── IMPORTAR GASTOS DESDE EXCEL / CSV ──────────────────────────────
+if not cerrado:
+    with st.expander("📥 Importar gastos desde Excel / CSV", expanded=False):
+        st.caption(
+            "Suba el histórico de operaciones del banco. "
+            "El sistema detecta automáticamente las columnas de fecha, monto, "
+            "beneficiario y concepto. La tasa BCV se aplica según la **fecha de cada pago**."
+        )
+
+        if st.session_state.pop("_flash_import_ok", False):
+            n_imp = st.session_state.pop("_flash_import_n", 0)
+            st.success(f"✅ {n_imp} gasto(s) importados correctamente.")
+
+        uploaded = st.file_uploader(
+            "Seleccione archivo Excel (.xlsx) o CSV (.csv)",
+            type=["xlsx", "xls", "csv"],
+            key="gastos_file_uploader",
+        )
+
+        if uploaded is not None:
+            from utils.gastos_importer import (
+                cargar_df, detectar_columnas, etiqueta_col, procesar_filas, MES_NOMBRES
+            )
+            try:
+                df_raw = cargar_df(uploaded, uploaded.name)
+            except ValueError as e:
+                st.error(f"❌ {e}")
+                df_raw = None
+
+            if df_raw is not None:
+                st.markdown(
+                    f"**Vista previa** — {df_raw.shape[0]} filas × {df_raw.shape[1]} columnas"
+                )
+                st.dataframe(
+                    df_raw.head(6).fillna(""),
+                    use_container_width=True,
+                    hide_index=True,
+                )
+
+                auto_map = detectar_columnas(df_raw)
+                col_options = ["— (no usar) —"] + [
+                    etiqueta_col(df_raw, i) for i in range(df_raw.shape[1])
+                ]
+
+                def _opt_idx(campo: str) -> int:
+                    v = auto_map.get(campo)
+                    return 0 if v is None else v + 1
+
+                st.markdown("**Mapeo de columnas** _(ajuste si la detección automática falla)_")
+                mc1, mc2, mc3, mc4, mc5 = st.columns(5)
+                sel_fecha  = mc1.selectbox("Fecha",         col_options, index=_opt_idx("fecha"),        key="imp_col_fecha")
+                sel_ref    = mc2.selectbox("Referencia",    col_options, index=_opt_idx("referencia"),   key="imp_col_ref")
+                sel_monto  = mc3.selectbox("Monto (Bs.)",   col_options, index=_opt_idx("monto"),        key="imp_col_monto")
+                sel_benef  = mc4.selectbox("Beneficiario",  col_options, index=_opt_idx("beneficiario"), key="imp_col_benef")
+                sel_conc   = mc5.selectbox("Concepto",      col_options, index=_opt_idx("concepto"),     key="imp_col_conc")
+
+                def _col_idx(sel: str) -> int | None:
+                    if sel.startswith("—"):
+                        return None
+                    return col_options.index(sel) - 1
+
+                col_map_user = {
+                    "fecha":        _col_idx(sel_fecha),
+                    "referencia":   _col_idx(sel_ref),
+                    "monto":        _col_idx(sel_monto),
+                    "beneficiario": _col_idx(sel_benef),
+                    "concepto":     _col_idx(sel_conc),
+                }
+
+                ot1, ot2 = st.columns([2, 1])
+                desc_tpl = ot1.selectbox(
+                    "Formato de descripción",
+                    [
+                        "{beneficiario} {concepto}",
+                        "{concepto}",
+                        "{beneficiario}",
+                    ],
+                    index=0,
+                    key="imp_desc_tpl",
+                )
+                agregar_mes = ot2.checkbox(
+                    "Agregar mes al final si no está",
+                    value=True,
+                    key="imp_agregar_mes",
+                )
+
+                if st.button("🔍 Previsualizar importación", key="btn_imp_preview"):
+                    filas_prev, errores_prev = procesar_filas(
+                        df_raw, col_map_user, desc_tpl, agregar_mes
+                    )
+                    st.session_state["_imp_preview"] = filas_prev
+                    st.session_state["_imp_errores"] = errores_prev
+                    st.session_state["_imp_col_map"] = col_map_user
+                    st.session_state["_imp_desc_tpl"] = desc_tpl
+                    st.session_state["_imp_agregar_mes"] = agregar_mes
+                    st.rerun()
+
+                # Mostrar preview si existe en session_state
+                if st.session_state.get("_imp_preview") is not None:
+                    filas_prev  = st.session_state["_imp_preview"]
+                    errores_prev = st.session_state.get("_imp_errores", [])
+
+                    if errores_prev:
+                        with st.expander(f"⚠️ {len(errores_prev)} fila(s) con error (no se importarán)"):
+                            for e in errores_prev[:20]:
+                                st.write(e)
+
+                    if filas_prev:
+                        # Calcular tasas BCV por fecha única (batch)
+                        from utils.tasa_bcv_resolver import resolver_tasa_para_fecha
+                        _bcv_cache: dict[str, float] = {}
+                        _client_imp = get_supabase_client()
+                        fechas_unicas = {str(f["fecha"]) for f in filas_prev}
+                        for fd_str in fechas_unicas:
+                            tasa_fd, _ = resolver_tasa_para_fecha(_client_imp, fd_str)
+                            _bcv_cache[fd_str] = float(tasa_fd or 0)
+
+                        rows_prev_ui = []
+                        for f in filas_prev:
+                            tasa_fd = _bcv_cache.get(str(f["fecha"]), 0.0)
+                            usd_v = round(f["monto_bs"] / tasa_fd, 2) if tasa_fd > 0 else 0.0
+                            rows_prev_ui.append({
+                                "Fecha": str(f["fecha"]),
+                                "Referencia": f["referencia"],
+                                "Descripción": f["descripcion"],
+                                "Bs.": f"{f['monto_bs']:,.2f}",
+                                "Tasa BCV": f"{tasa_fd:,.2f}" if tasa_fd > 0 else "—",
+                                "USD": f"{usd_v:,.4f}" if tasa_fd > 0 else "—",
+                            })
+
+                        total_imp = round(sum(f["monto_bs"] for f in filas_prev), 2)
+                        st.markdown(
+                            f"**{len(filas_prev)} gasto(s) listos — Total: Bs. {total_imp:,.2f}**"
+                        )
+                        st.dataframe(rows_prev_ui, use_container_width=True, hide_index=True)
+
+                        if st.button(
+                            f"✅ Importar {len(filas_prev)} gastos",
+                            type="primary",
+                            key="btn_imp_confirmar",
+                        ):
+                            from utils.tasa_bcv_resolver import resolver_tasa_para_fecha as _rtpf
+                            _c2 = get_supabase_client()
+                            n_ok = 0
+                            n_err = 0
+                            for f in filas_prev:
+                                try:
+                                    tasa_fd = _bcv_cache.get(str(f["fecha"]), 0.0)
+                                    usd_v = round(f["monto_bs"] / tasa_fd, 4) if tasa_fd > 0 else 0.0
+                                    _c2.table("movimientos").insert({
+                                        "condominio_id": condominio_id,
+                                        "periodo": periodo_db,
+                                        "fecha": str(f["fecha"]),
+                                        "descripcion": f["descripcion"],
+                                        "referencia": f["referencia"] or None,
+                                        "tipo": "egreso",
+                                        "monto_bs": f["monto_bs"],
+                                        "monto_usd": usd_v,
+                                        "tasa_cambio": tasa_fd,
+                                        "fuente": "manual",
+                                        "estado": "pendiente",
+                                    }).execute()
+                                    n_ok += 1
+                                except Exception:
+                                    n_err += 1
+                            st.session_state.pop("_imp_preview", None)
+                            st.session_state.pop("_imp_errores", None)
+                            st.session_state["_flash_import_ok"] = True
+                            st.session_state["_flash_import_n"] = n_ok
+                            if n_err:
+                                st.warning(f"⚠️ {n_err} fila(s) no se pudieron insertar.")
+                            st.rerun()
+                    else:
+                        st.warning("No se encontraron filas válidas con el mapeo actual.")
+
 st.divider()
 
 st.markdown("### Presupuesto del mes")
