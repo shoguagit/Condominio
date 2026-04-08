@@ -201,11 +201,12 @@ def _build_recibo(d: dict, logo_img: Any = None) -> list:
     ))
 
     # ── 5. Encabezado columnas conceptos ─────────────────────────────────────
+    # "Mes US$" = total edificio en USD | "Acum. N" = parte de esta unidad en USD
     mac = str(d.get("mes_acum", "")) if d.get("mes_acum") else ""
     elems.append(_tbl(
         [[_p(""),
           _p("CONCEPTO DE GASTOS", size=8, bold=True, color=BLUE_HDR, align=TA_CENTER),
-          _p("Mes",     size=8, bold=True, color=BLUE_HDR, align=TA_CENTER),
+          _p("Mes\nUS$",  size=7, bold=True, color=BLUE_HDR, align=TA_CENTER, leading=9),
           _p(f"Acum.\n{mac}", size=7, bold=True, color=BLUE_HDR, align=TA_CENTER, leading=9)]],
         [cA, cBC, cD, cE], RH_CHD,
         [("BACKGROUND", (0, 0), (-1, -1), BLUE_LT),
@@ -333,26 +334,32 @@ def preparar_datos_recibo(
     alic_fmt = f"{float(unidad.get('indiviso_pct') or 0):.2f}".replace(".", ",")
     mes_v = f"{mes_nombre} {anio}"
 
+    # Columna "Mes"    = total del EDIFICIO en USD para ese concepto.
+    # Columna "Acum. N" = parte de ESTA UNIDAD en USD = total_usd × alícuota/100.
+    # Verificación: Mes × (alícuota/100) = Acum. ✓
     items = []
     for lg in lineas_gasto:
-        bs_unit  = round(float(lg.get("total_bs",  0)) * alicuota, 2)
-        usd_unit = round(float(lg.get("total_usd", 0)) * alicuota, 4)
+        total_usd_conc = round(float(lg.get("total_usd", 0)), 2)
+        usd_unit       = round(total_usd_conc * alicuota, 4)
         items.append({
             "conc": lg.get("nombre") or "Sin descripción",
-            "bs":   bs_unit,
-            "usd":  usd_unit,
+            "bs":   total_usd_conc,   # "Mes"    → total edificio USD
+            "usd":  usd_unit,          # "Acum.1" → parte unidad USD
         })
 
-    tc_bs  = round(total_gastos_bs  * alicuota, 2)
+    # Totales: misma lógica — Mes = edificio total USD, Acum = parte unidad USD
     tc_usd = round(total_gastos_usd * alicuota, 4)
-    fr_bs  = round(fondo_reserva_bs  * alicuota, 2)
     fr_usd = round(fondo_reserva_usd * alicuota, 4)
 
     totals = [
-        {"lbl": f"TOTAL GASTOS COMUNES {mes_nombre}",         "bs": tc_bs,         "usd": tc_usd},
-        {"lbl": "MAS: FONDO DE RESERVA 10%",                   "bs": fr_bs,         "usd": fr_usd},
-        {"lbl": f"TOTAL GASTOS RELACIONADOS DEL MES {mes_nombre}", "bs": round(total_relacionado_bs * alicuota, 2), "usd": round(total_relacionado_usd * alicuota, 4)},
-        {"lbl": f"CUOTA MES {mes_nombre} EN DIVISA {anio}",    "bs": cuota_mes_bs,  "usd": cuota_mes_usd},
+        {"lbl": f"TOTAL GASTOS COMUNES {mes_nombre}",
+         "bs": round(total_gastos_usd, 2),       "usd": tc_usd},
+        {"lbl": "MAS: FONDO DE RESERVA 10%",
+         "bs": round(fondo_reserva_usd, 2),       "usd": fr_usd},
+        {"lbl": f"TOTAL GASTOS RELACIONADOS DEL MES {mes_nombre}",
+         "bs": round(total_relacionado_usd, 2),   "usd": round(total_relacionado_usd * alicuota, 4)},
+        {"lbl": f"CUOTA MES {mes_nombre} EN DIVISA {anio}",
+         "bs": round(total_relacionado_usd, 2),   "usd": cuota_mes_usd},
     ]
 
     saldos = [
