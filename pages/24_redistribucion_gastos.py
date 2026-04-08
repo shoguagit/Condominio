@@ -435,48 +435,212 @@ st.markdown("---")
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# GUARDAR + PASO 3 — GENERAR
+# GUARDAR
 # ═══════════════════════════════════════════════════════════════════════════════
-st.markdown("### 💾 Guardar y generar reportes")
-
-col_save, col_bal, col_rec = st.columns([2, 2, 2])
-
-# ── Guardar en DB ──────────────────────────────────────────────────────────
+col_save, col_estado = st.columns([2, 5])
 with col_save:
     if st.button("💾 Guardar agrupaciones", type="primary", use_container_width=True):
         grupos_para_db = _calcular_grupos(egresos, asig_state, dest_state)
         try:
             repo_agr.upsert(condominio_id, periodo_db, grupos_para_db)
-            st.success("✅ Agrupaciones guardadas correctamente.")
+            st.success("✅ Agrupaciones guardadas.")
         except Exception as e:
             st.error(f"❌ Error al guardar: {e}")
+with col_estado:
+    if guardado is not None:
+        st.success(
+            f"✅ Agrupaciones guardadas — **{len(guardado)} grupos** para {mes_nombre} {anio}."
+        )
+    else:
+        st.info("📝 Sin agrupaciones guardadas aún. Guarda antes de generar los PDFs.")
 
-# ── PDF Balance ────────────────────────────────────────────────────────────
-with col_bal:
-    if st.button("📊 Generar Balance PDF", use_container_width=True):
-        from utils.balance_pdf import generar_balance_pdf
-        grupos_balance = [
-            g for g in _calcular_grupos(egresos, asig_state, dest_state)
-            if dest_state.get(g["nombre"], {}).get("balance", True)
-        ]
-        if not grupos_balance:
-            st.warning("Ningún grupo está marcado para Balance.")
+st.markdown("---")
+
+# Grupos actualizados con destinos para las previsualizaciones
+grupos_final    = _calcular_grupos(egresos, asig_state, dest_state)
+grupos_recibo   = [g for g in grupos_final if dest_state.get(g["nombre"], {}).get("recibo",  True)]
+grupos_balance  = [g for g in grupos_final if dest_state.get(g["nombre"], {}).get("balance", True)]
+
+# Carga unidades y cuotas (compartido entre previsualización y generación)
+try:
+    _unidades_todas   = repo_uni.get_all(condominio_id)
+    _unidades_validas = [u for u in _unidades_todas if float(u.get("indiviso_pct") or 0) > 0]
+except Exception:
+    _unidades_validas = []
+
+try:
+    _cuotas_periodo   = repo_proc.get_cuotas(condominio_id, periodo_db)
+except Exception:
+    _cuotas_periodo   = []
+_cuotas_por_unidad = {c["unidad_id"]: c for c in _cuotas_periodo}
+
+# Totales de conceptos para Recibo
+if grupos_recibo:
+    _tr_total_bs  = sum(g["total_bs"]  for g in grupos_recibo)
+    _tr_total_usd = sum(g["total_usd"] for g in grupos_recibo)
+    _tr_fr_bs     = round(_tr_total_bs  * 0.10, 2)
+    _tr_fr_usd    = round(_tr_total_usd * 0.10, 2)
+    _tr_rel_bs    = round(_tr_total_bs  + _tr_fr_bs,  2)
+    _tr_rel_usd   = round(_tr_total_usd + _tr_fr_usd, 2)
+else:
+    _tr_total_bs = _tr_total_usd = _tr_fr_bs = _tr_fr_usd = _tr_rel_bs = _tr_rel_usd = 0.0
+
+
+def _datos_recibo_unidad(u: dict) -> dict:
+    """Calcula el dict de datos del recibo para una unidad."""
+    from utils.recibo_pdf import preparar_datos_recibo
+    uid      = u.get("id")
+    alic_dec = float(u.get("indiviso_pct") or 0) / 100.0
+    cuota_r  = _cuotas_por_unidad.get(uid)
+    if cuota_r:
+        cuota_bs  = float(cuota_r.get("cuota_calculada_bs") or 0)
+        saldo_ant = float(cuota_r.get("saldo_anterior_bs")  or u.get("saldo") or 0)
+    else:
+        cuota_bs  = round(_tr_rel_bs * alic_dec, 2)
+        saldo_ant = float(u.get("saldo") or 0)
+    cuota_usd   = round(_tr_rel_usd * alic_dec, 4)
+    saldo_nuevo = round(saldo_ant + cuota_bs, 2)
+    return preparar_datos_recibo(
+        condominio=condominio, unidad=u,
+        mes_nombre=mes_nombre, anio=anio,
+        lineas_gasto=grupos_recibo,
+        total_gastos_bs=_tr_total_bs,   total_gastos_usd=_tr_total_usd,
+        fondo_reserva_bs=_tr_fr_bs,     fondo_reserva_usd=_tr_fr_usd,
+        total_relacionado_bs=_tr_rel_bs, total_relacionado_usd=_tr_rel_usd,
+        cuota_mes_bs=cuota_bs,          cuota_mes_usd=cuota_usd,
+        saldo_anterior_bs=saldo_ant,    pagos_mes_bs=0.0,
+        saldo_nuevo_bs=saldo_nuevo,     meses_acum=1,
+    )
+
+
+def _render_preview_recibo(d: dict) -> None:
+    """Renderiza en Streamlit la vista previa de un recibo (sin PDF)."""
+    alic = float(d.get("alicuota_fmt", "0").replace(",", ".") or 0)
+
+    # Encabezado
+    c1, c2 = st.columns([3, 2])
+    with c1:
+        st.markdown(
+            f"**{d['org']}** &nbsp;·&nbsp; RIF: {d['rif']}",
+            unsafe_allow_html=True,
+        )
+    with c2:
+        st.markdown(
+            f"**Propietario:** {d['owner']}  \n"
+            f"**Inmueble:** {d['inmueble']} &nbsp;·&nbsp; **Alícuota:** {d['alicuota_fmt']}%  \n"
+            f"**Correo:** {d['email'] or '—'}  \n"
+            f"**Emisión:** {d['emision']}  \n"
+            f"**Monto USD:** ${d['monto_usd']:,.4f} &nbsp;·&nbsp; "
+            f"**Acumulado:** ${d['acum_usd']:,.4f}",
+        )
+
+    # Tabla de ítems
+    items = d.get("items") or []
+    if items:
+        rows = []
+        for it in items:
+            rows.append({
+                "CONCEPTO DE GASTOS": it["conc"],
+                "Mes US$":            round(float(it["bs"]),  2),
+                "Acum. 1":            round(float(it["usd"]), 4),
+            })
+        st.dataframe(
+            rows,
+            use_container_width=True,
+            hide_index=True,
+            column_config={
+                "CONCEPTO DE GASTOS": st.column_config.TextColumn(width="large"),
+                "Mes US$":            st.column_config.NumberColumn(format="$%.2f"),
+                "Acum. 1":            st.column_config.NumberColumn(format="$%.4f"),
+            },
+        )
+
+    # Totales
+    for tot in (d.get("totals") or []):
+        is_cuota = "CUOTA" in str(tot.get("lbl", "")).upper()
+        label = f"**{tot['lbl']}**" if is_cuota else tot["lbl"]
+        bs_v  = f"${float(tot['bs']):,.2f}"  if tot.get("bs")  is not None else ""
+        usd_v = f"${float(tot['usd']):,.4f}" if tot.get("usd") is not None else ""
+        if is_cuota:
+            st.markdown(
+                f"<div style='background:#2E74B5;color:white;padding:4px 8px;"
+                f"border-radius:4px;margin:2px 0;font-weight:bold'>"
+                f"{tot['lbl']} — Edificio: {bs_v} | Esta unidad: {usd_v}</div>",
+                unsafe_allow_html=True,
+            )
         else:
-            with st.spinner("Generando Balance..."):
-                try:
-                    pdf_bytes = generar_balance_pdf(
-                        condominio_nombre=condominio.get("nombre") or "",
-                        condominio_rif=condominio.get("numero_documento") or "",
-                        mes_nombre=mes_nombre,
-                        anio=anio,
-                        grupos=grupos_balance,
-                        pie_titular=condominio.get("pie_pagina_titular") or "",
-                        pie_cuerpo=condominio.get("pie_pagina_cuerpo") or "",
-                    )
-                    st.session_state["_balance_pdf_bytes"] = pdf_bytes
-                    st.session_state["_balance_pdf_nombre"] = f"Balance_{mes_nombre}_{anio}.pdf"
-                except Exception as e:
-                    st.error(f"❌ {e}")
+            st.caption(f"{tot['lbl']}: edificio {bs_v} | unidad {usd_v}")
+
+    # Saldos
+    with st.expander("📊 Saldos acumulados", expanded=False):
+        for s in (d.get("saldos") or []):
+            edif = f"Bs. {float(s['edif']):,.2f}" if s.get("edif") is not None else "—"
+            st.caption(f"**{s['lbl']}**: {edif}")
+
+
+def _render_preview_balance(gb: list[dict]) -> None:
+    """Renderiza en Streamlit la vista previa del balance mensual."""
+    total_usd = sum(float(g["total_usd"]) for g in gb)
+    total_bs  = sum(float(g["total_bs"])  for g in gb)
+    fr_usd    = round(total_usd * 0.10, 2)
+    fr_bs     = round(total_bs  * 0.10, 2)
+
+    rows = [{"#": i + 1,
+             "CONCEPTO": g["nombre"],
+             "Total Bs.": round(float(g["total_bs"]),  2),
+             "Total USD": round(float(g["total_usd"]), 2)}
+            for i, g in enumerate(gb)]
+    st.dataframe(
+        rows,
+        use_container_width=True,
+        hide_index=True,
+        column_config={
+            "#":          st.column_config.NumberColumn(width="small"),
+            "CONCEPTO":   st.column_config.TextColumn(width="large"),
+            "Total Bs.":  st.column_config.NumberColumn(format="%.2f"),
+            "Total USD":  st.column_config.NumberColumn(format="$%.2f"),
+        },
+    )
+    c1, c2, c3 = st.columns(3)
+    c1.metric("Total Gastos Bs.",          f"Bs. {total_bs:,.2f}")
+    c2.metric("Total Gastos USD",          f"${total_usd:,.2f}")
+    c3.metric(f"Fondo Reserva 10% USD",    f"${fr_usd:,.2f}")
+    st.markdown(
+        f"**Total Gastos Relacionados:** Bs. {total_bs + fr_bs:,.2f} &nbsp;|&nbsp; "
+        f"USD ${total_usd + fr_usd:,.2f}",
+        unsafe_allow_html=True,
+    )
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# PASO 3A — BALANCE: VISTA PREVIA + GENERAR PDF
+# ═══════════════════════════════════════════════════════════════════════════════
+st.markdown("### 📊 Paso 3A — Balance Mensual")
+
+if not grupos_balance:
+    st.warning("Ningún grupo está marcado para **Balance**. Activa la columna 📊 en el Paso 2.")
+else:
+    with st.expander(
+        f"👁️ Vista previa Balance — {len(grupos_balance)} conceptos", expanded=False
+    ):
+        _render_preview_balance(grupos_balance)
+
+    if st.button("📥 Generar Balance PDF", use_container_width=False, key="btn_bal_pdf"):
+        from utils.balance_pdf import generar_balance_pdf
+        with st.spinner("Generando PDF..."):
+            try:
+                pdf_bytes = generar_balance_pdf(
+                    condominio_nombre=condominio.get("nombre") or "",
+                    condominio_rif=condominio.get("numero_documento") or "",
+                    mes_nombre=mes_nombre, anio=anio,
+                    grupos=grupos_balance,
+                    pie_titular=condominio.get("pie_pagina_titular") or "",
+                    pie_cuerpo=condominio.get("pie_pagina_cuerpo") or "",
+                )
+                st.session_state["_balance_pdf_bytes"] = pdf_bytes
+                st.session_state["_balance_pdf_nombre"] = f"Balance_{mes_nombre}_{anio}.pdf"
+            except Exception as e:
+                st.error(f"❌ {e}")
 
     if st.session_state.get("_balance_pdf_bytes"):
         st.download_button(
@@ -487,98 +651,103 @@ with col_bal:
             key="dl_balance",
         )
 
-# ── PDF Recibos ────────────────────────────────────────────────────────────
-with col_rec:
-    if st.button("📄 Generar Recibos PDF", use_container_width=True):
-        from utils.recibo_pdf import preparar_datos_recibo, generar_recibos_pdf
+st.markdown("---")
 
-        grupos_recibo = [
-            g for g in _calcular_grupos(egresos, asig_state, dest_state)
-            if dest_state.get(g["nombre"], {}).get("recibo", True)
-        ]
-        if not grupos_recibo:
-            st.warning("Ningún grupo está marcado para Recibo.")
-        else:
-            with st.spinner("Generando recibos..."):
+# ═══════════════════════════════════════════════════════════════════════════════
+# PASO 3B — RECIBOS: VISTA PREVIA POR UNIDAD + GENERAR PDF
+# ═══════════════════════════════════════════════════════════════════════════════
+st.markdown("### 📄 Paso 3B — Recibos por Unidad")
+
+if not grupos_recibo:
+    st.warning("Ningún grupo está marcado para **Recibo**. Activa la columna 📄 en el Paso 2.")
+elif not _unidades_validas:
+    st.warning("No hay unidades con alícuota registradas.")
+else:
+    # ── Selector de unidad ──────────────────────────────────────────────────
+    opts_uni = {}
+    for u in _unidades_validas:
+        codigo = (u.get("codigo") or u.get("numero") or "").strip()
+        prop   = u.get("propietarios") or {}
+        label  = f"{codigo} — {(prop.get('nombre') or '—')}"
+        opts_uni[label] = u
+
+    col_sel, col_prev = st.columns([3, 2])
+    with col_sel:
+        sel_uni = st.selectbox(
+            "Seleccionar unidad para previsualizar",
+            options=list(opts_uni.keys()),
+            key="prev_uni_sel",
+        )
+    with col_prev:
+        st.markdown("<br>", unsafe_allow_html=True)
+        mostrar_prev = st.button("👁️ Ver vista previa", key="btn_prev_recibo")
+
+    # ── Vista previa de la unidad seleccionada ──────────────────────────────
+    unidad_sel = opts_uni.get(sel_uni)
+    if mostrar_prev and unidad_sel:
+        st.session_state["_prev_recibo_uid"] = unidad_sel.get("id")
+
+    if st.session_state.get("_prev_recibo_uid"):
+        uid_prev = st.session_state["_prev_recibo_uid"]
+        u_prev   = next((u for u in _unidades_validas if u.get("id") == uid_prev), None)
+        if u_prev:
+            codigo_prev = (u_prev.get("codigo") or u_prev.get("numero") or "").strip()
+            with st.expander(
+                f"👁️ Vista previa — Inmueble {codigo_prev}", expanded=True
+            ):
                 try:
-                    unidades = repo_uni.get_all(condominio_id)
-                    unidades_validas = [u for u in unidades if float(u.get("indiviso_pct") or 0) > 0]
+                    d_prev = _datos_recibo_unidad(u_prev)
+                    _render_preview_recibo(d_prev)
 
-                    try:
-                        cuotas_periodo = repo_proc.get_cuotas(condominio_id, periodo_db)
-                    except Exception:
-                        cuotas_periodo = []
-                    cuotas_por_unidad = {c["unidad_id"]: c for c in cuotas_periodo}
+                    # PDF solo para esta unidad
+                    from utils.recibo_pdf import generar_recibos_pdf as _gen_pdf
+                    if st.button(
+                        f"📥 Generar PDF solo {codigo_prev}",
+                        key=f"btn_pdf_uno_{uid_prev}",
+                    ):
+                        with st.spinner("Generando..."):
+                            pdf_u = _gen_pdf([d_prev])
+                            st.session_state["_pdf_uno_bytes"] = pdf_u
+                            st.session_state["_pdf_uno_nombre"] = (
+                                f"Recibo_{codigo_prev}_{mes_nombre}_{anio}.pdf"
+                            )
 
-                    total_bs  = sum(g["total_bs"]  for g in grupos_recibo)
-                    total_usd = sum(g["total_usd"] for g in grupos_recibo)
-                    fr_bs  = round(total_bs  * 0.10, 2)
-                    fr_usd = round(total_usd * 0.10, 2)
-                    tot_rel_bs  = round(total_bs  + fr_bs,  2)
-                    tot_rel_usd = round(total_usd + fr_usd, 2)
-
-                    todos_datos: list[dict] = []
-                    for u in unidades_validas:
-                        uid      = u.get("id")
-                        alic_pct = float(u.get("indiviso_pct") or 0) / 100.0
-                        cuota_r  = cuotas_por_unidad.get(uid)
-
-                        if cuota_r:
-                            cuota_bs = float(cuota_r.get("cuota_calculada_bs") or 0)
-                            saldo_ant = float(cuota_r.get("saldo_anterior_bs")  or u.get("saldo") or 0)
-                        else:
-                            cuota_bs  = round(tot_rel_bs * alic_pct, 2)
-                            saldo_ant = float(u.get("saldo") or 0)
-
-                        cuota_usd  = round(tot_rel_usd * alic_pct, 4)
-                        saldo_nuevo = round(saldo_ant + cuota_bs, 2)
-
-                        datos = preparar_datos_recibo(
-                            condominio=condominio,
-                            unidad=u,
-                            mes_nombre=mes_nombre,
-                            anio=anio,
-                            lineas_gasto=grupos_recibo,
-                            total_gastos_bs=total_bs,
-                            total_gastos_usd=total_usd,
-                            fondo_reserva_bs=fr_bs,
-                            fondo_reserva_usd=fr_usd,
-                            total_relacionado_bs=tot_rel_bs,
-                            total_relacionado_usd=tot_rel_usd,
-                            cuota_mes_bs=cuota_bs,
-                            cuota_mes_usd=cuota_usd,
-                            saldo_anterior_bs=saldo_ant,
-                            pagos_mes_bs=0.0,
-                            saldo_nuevo_bs=saldo_nuevo,
-                            meses_acum=1,
+                    if st.session_state.get("_pdf_uno_bytes"):
+                        st.download_button(
+                            label=f"⬇️ Descargar recibo {codigo_prev}",
+                            data=st.session_state["_pdf_uno_bytes"],
+                            file_name=st.session_state.get("_pdf_uno_nombre", "Recibo.pdf"),
+                            mime="application/pdf",
+                            key="dl_pdf_uno",
                         )
-                        todos_datos.append(datos)
-
-                    pdf_bytes = generar_recibos_pdf(todos_datos)
-                    st.session_state["_recibos_pdf_bytes"] = pdf_bytes
-                    st.session_state["_recibos_pdf_nombre"] = f"Recibos_{mes_nombre}_{anio}.pdf"
                 except Exception as e:
-                    st.error(f"❌ {e}")
+                    st.error(f"❌ Error al generar vista previa: {e}")
+
+    st.markdown("---")
+
+    # ── Generar TODOS los recibos ───────────────────────────────────────────
+    st.markdown(f"**Generar todos los recibos — {len(_unidades_validas)} unidades**")
+    if st.button(
+        f"📥 Generar PDF todos los recibos ({len(_unidades_validas)} unidades)",
+        key="btn_pdf_todos",
+    ):
+        with st.spinner(f"Generando {len(_unidades_validas)} recibos..."):
+            try:
+                from utils.recibo_pdf import generar_recibos_pdf as _gen_pdfs
+                todos_datos = [_datos_recibo_unidad(u) for u in _unidades_validas]
+                pdf_todos   = _gen_pdfs(todos_datos)
+                st.session_state["_recibos_pdf_bytes"] = pdf_todos
+                st.session_state["_recibos_pdf_nombre"] = (
+                    f"Recibos_{mes_nombre}_{anio}.pdf"
+                )
+            except Exception as e:
+                st.error(f"❌ {e}")
 
     if st.session_state.get("_recibos_pdf_bytes"):
         st.download_button(
-            label="⬇️ Descargar Recibos PDF",
+            label="⬇️ Descargar todos los recibos (PDF)",
             data=st.session_state["_recibos_pdf_bytes"],
             file_name=st.session_state.get("_recibos_pdf_nombre", "Recibos.pdf"),
             mime="application/pdf",
             key="dl_recibos",
         )
-
-# ── Indicador de agrupaciones guardadas ───────────────────────────────────
-st.markdown("---")
-if guardado is not None:
-    st.success(
-        f"✅ Este período tiene agrupaciones guardadas con **{len(guardado)} grupos**. "
-        "Los Recibos y el Balance usarán estos grupos al generarse."
-    )
-else:
-    st.info(
-        "📝 No hay agrupaciones guardadas para este período. "
-        "Al generar los PDFs se usará la distribución actual de la sesión. "
-        "Usa **💾 Guardar agrupaciones** para persistirlas."
-    )
