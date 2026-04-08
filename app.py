@@ -336,6 +336,19 @@ MODULES = {
         ("c-prov",   "📄", "Proveedores",   "Empresas proveedoras",      "pages/13_proveedores.py"),
         ("c-prov",   "🧾", "Facturas",      "Facturas y pagos",          "pages/14_facturas.py"),
     ],
+    "🗓️  Operaciones Mensuales": [
+        ("c-ops",    "⚙️",  "Proceso Mensual",        "Gastos y cuotas del mes",    "pages/17_proceso_mensual.py"),
+        ("c-ops",    "🔄",  "Redistribución Gastos",  "Agrupar y asignar destino",  "pages/24_redistribucion_gastos.py"),
+        ("c-ops",    "🧾",  "Recibos",                "Recibo por propietario",     "pages/19_recibos.py"),
+        ("c-ops",    "💳",  "Pagos",                  "Registrar cobros",           "pages/20_pagos.py"),
+        ("c-ops",    "💰",  "Saldo Inicial",          "Saldos de apertura",         "pages/23_saldo_inicial.py"),
+        ("c-ops",    "📋",  "Movimientos",            "Ingresos y egresos",         "pages/16_movimientos.py"),
+    ],
+    "📤  Estados de Cuenta": [
+        ("c-report", "📑",  "Estado de Cuenta",       "Por propietario",            "pages/18_estado_cuenta.py"),
+        ("c-report", "📦",  "Est. Cuenta Masivo",     "Envío masivo por email",     "pages/22_estados_cuenta_masivo.py"),
+        ("c-report", "🔔",  "Notificaciones",         "Avisos a propietarios",      "pages/21_notificaciones.py"),
+    ],
     "📈  Reportes": [
         ("c-report", "📈", "Reportes",      "Informes financieros",      "pages/15_reportes.py"),
     ],

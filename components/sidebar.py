@@ -299,6 +299,7 @@ div[data-testid="stForm"] button[kind="primaryFormSubmit"]:hover {
 .mod-card.c-fin,
 .mod-card.c-prov,
 .mod-card.c-report { border-left-color: #2E86C1; }
+.mod-card.c-ops { border-left-color: #1E8449; }
 
 .mod-icon  { font-size: 1.5rem; line-height: 1; margin-bottom: 6px; color: #1B4F72; }
 .mod-title { font-size: 13px; font-weight: 700; color: #1C2833; margin: 0; line-height: 1.25; }
