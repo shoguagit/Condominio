@@ -318,13 +318,15 @@ def render_recibo(unidad: dict) -> None:
         data = []
         for l in lineas:
             parte_usd = round(l["total_usd"] * alicuota, 2)
+            mes_usd   = round(parte_usd / alicuota, 2) if alicuota > 0 else round(l["total_usd"], 2)
             parte_bs  = round(l["total_bs"]  * alicuota, 2)
+            mes_bs    = round(parte_bs  / alicuota, 2) if alicuota > 0 else round(l["total_bs"],  2)
             tasa_str  = f"{l['tasa']:,.2f}" if l["tasa"] > 0 else "—"
             data.append({
                 "CONCEPTO DE GASTOS": l["nombre"],
-                "Mes Acum. USD":      round(l["total_usd"], 2),
-                "Parte (USD)":        round(parte_usd, 2),
-                "Mes Acum. Bs.":      round(l["total_bs"],  2),
+                "Mes Acum. USD":      mes_usd,
+                "Parte (USD)":        parte_usd,
+                "Mes Acum. Bs.":      mes_bs,
                 "Parte (Bs.)":        parte_bs,
                 "Tasa BCV":           tasa_str,
             })
@@ -343,17 +345,21 @@ def render_recibo(unidad: dict) -> None:
         )
 
     # ── Totales ───────────────────────────────────────────────────
-    tc_bs  = round(total_gastos_bs  * alicuota, 2)
     tc_usd = round(total_gastos_usd * alicuota, 2)
-    fr_bs  = round(fondo_reserva_bs  * alicuota, 2)
+    tc_bs  = round(total_gastos_bs  * alicuota, 2)
+    tc_mes_usd = round(tc_usd / alicuota, 2) if alicuota > 0 else round(total_gastos_usd, 2)
+    tc_mes_bs  = round(tc_bs  / alicuota, 2) if alicuota > 0 else round(total_gastos_bs,  2)
     fr_usd = round(fondo_reserva_usd * alicuota, 2)
+    fr_bs  = round(fondo_reserva_bs  * alicuota, 2)
+    fr_mes_usd = round(fr_usd / alicuota, 2) if alicuota > 0 else round(fondo_reserva_usd, 2)
+    fr_mes_bs  = round(fr_bs  / alicuota, 2) if alicuota > 0 else round(fondo_reserva_bs,  2)
 
     st.markdown(
         f"""
 | | **Total mes** | **Esta unidad** |
 |---|---|---|
-| **TOTAL GASTOS COMUNES {mes_nombre}** | Bs. {total_gastos_bs:,.2f} / USD {total_gastos_usd:,.2f} | **Bs. {tc_bs:,.2f} / USD {tc_usd:,.2f}** |
-| **MÁS: FONDO DE RESERVA (10%)** | Bs. {fondo_reserva_bs:,.2f} / USD {fondo_reserva_usd:,.2f} | **Bs. {fr_bs:,.2f} / USD {fr_usd:,.2f}** |
+| **TOTAL GASTOS COMUNES {mes_nombre}** | Bs. {tc_mes_bs:,.2f} / USD {tc_mes_usd:,.2f} | **Bs. {tc_bs:,.2f} / USD {tc_usd:,.2f}** |
+| **MÁS: FONDO DE RESERVA (10%)** | Bs. {fr_mes_bs:,.2f} / USD {fr_mes_usd:,.2f} | **Bs. {fr_bs:,.2f} / USD {fr_usd:,.2f}** |
 | **TOTAL GASTOS RELACIONADOS** | Bs. {total_relacionado_bs:,.2f} / USD {total_relacionado_usd:,.2f} | |
 | **CUOTA MES {mes_nombre} EN DIVISAS** | | **USD {cuota_mes_usd:,.2f}** |
 | **CUOTA MES {mes_nombre} EN Bs.** | | **Bs. {cuota_mes_bs:,.2f}** |

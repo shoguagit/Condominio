@@ -335,31 +335,36 @@ def preparar_datos_recibo(
     mes_v = f"{mes_nombre} {anio}"
 
     # Columna "Mes"    = total del EDIFICIO en USD para ese concepto.
-    # Columna "Acum. N" = parte de ESTA UNIDAD en USD = total_usd × alícuota/100.
-    # Verificación: Mes × (alícuota/100) = Acum. ✓
+    # Acum.1 = round(total_usd × alícuota, 2)  → parte de esta unidad
+    # Mes    = round(Acum.1 / alícuota, 2)      → back-calculado desde el valor ya redondeado
+    # Así la verificación Acum.1 / alícuota = Mes cierra exactamente en 2 decimales.
     items = []
     for lg in lineas_gasto:
-        total_usd_conc = round(float(lg.get("total_usd", 0)), 2)
-        usd_unit       = round(total_usd_conc * alicuota, 2)
+        usd_unit = round(float(lg.get("total_usd", 0)) * alicuota, 2)
+        mes_usd  = round(usd_unit / alicuota, 2) if alicuota > 0 else round(float(lg.get("total_usd", 0)), 2)
         items.append({
             "conc": lg.get("nombre") or "Sin descripción",
-            "bs":   total_usd_conc,   # "Mes"    → total edificio USD
-            "usd":  usd_unit,          # "Acum.1" → parte unidad USD
+            "bs":   mes_usd,   # "Mes"    → back-calc desde Acum.1 redondeado
+            "usd":  usd_unit,  # "Acum.1" → parte unidad USD (redondeado)
         })
 
-    # Totales: misma lógica — Mes = edificio total USD, Acum = parte unidad USD
+    # Totales con la misma lógica
     tc_usd = round(total_gastos_usd * alicuota, 2)
     fr_usd = round(fondo_reserva_usd * alicuota, 2)
+    tc_mes = round(tc_usd / alicuota, 2) if alicuota > 0 else round(total_gastos_usd, 2)
+    fr_mes = round(fr_usd / alicuota, 2) if alicuota > 0 else round(fondo_reserva_usd, 2)
+    tr_usd = round(total_relacionado_usd * alicuota, 2)
+    tr_mes = round(tr_usd / alicuota, 2) if alicuota > 0 else round(total_relacionado_usd, 2)
 
     totals = [
         {"lbl": f"TOTAL GASTOS COMUNES {mes_nombre}",
-         "bs": round(total_gastos_usd, 2),       "usd": tc_usd},
+         "bs": tc_mes,  "usd": tc_usd},
         {"lbl": "MAS: FONDO DE RESERVA 10%",
-         "bs": round(fondo_reserva_usd, 2),       "usd": fr_usd},
+         "bs": fr_mes,  "usd": fr_usd},
         {"lbl": f"TOTAL GASTOS RELACIONADOS DEL MES {mes_nombre}",
-         "bs": round(total_relacionado_usd, 2),   "usd": round(total_relacionado_usd * alicuota, 2)},
+         "bs": tr_mes,  "usd": tr_usd},
         {"lbl": f"CUOTA MES {mes_nombre} EN DIVISA {anio}",
-         "bs": round(total_relacionado_usd, 2),   "usd": cuota_mes_usd},
+         "bs": tr_mes,  "usd": cuota_mes_usd},
     ]
 
     saldos = [
