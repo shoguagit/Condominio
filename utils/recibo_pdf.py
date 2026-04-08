@@ -50,8 +50,8 @@ MT = MB = 1.2 * cm
 UW = PW - ML - MR
 
 cA   = 2.1 * cm          # columna logo
-cD   = 1.65 * cm         # columna Bs
-cE   = 1.65 * cm         # columna USD
+cD   = 1.65 * cm         # columna Bs (Mes US$)
+cE   = 2.0 * cm          # columna USD (Acum. — 4 decimales)
 cBC  = UW - cA - cD - cE  # columna central (concepto/info)
 
 RH_TOP = 1.35 * cm
@@ -224,7 +224,7 @@ def _build_recibo(d: dict, logo_img: Any = None) -> list:
             rows.append([
                 Paragraph(_esc(str(it.get("conc") or "")), _ps("ik", 7)),
                 _p(""),
-                Paragraph(_fven(it.get("bs")), _ps("ir", 7, align=TA_RIGHT)),
+                Paragraph(_fven(it.get("bs")),  _ps("ir", 7, align=TA_RIGHT)),
                 Paragraph(_fven(it.get("usd")), _ps("iu", 7, align=TA_RIGHT)),
             ])
         t = Table(rows,
@@ -245,7 +245,7 @@ def _build_recibo(d: dict, logo_img: Any = None) -> list:
         elems.append(_tbl(
             [[_p(tot["lbl"], size=7, bold=True, color=tc),
               _p(""),
-              _p(_fven(tot.get("bs")), size=7, bold=True, color=tc, align=TA_RIGHT),
+              _p(_fven(tot.get("bs")),  size=7, bold=True, color=tc, align=TA_RIGHT),
               _p(_fven(tot.get("usd")), size=7, bold=True, color=tc, align=TA_RIGHT)]],
             [cA + cBC * 0.58, cBC * 0.42, cD, cE], RH_TOT,
             [("BACKGROUND", (0, 0), (-1, -1), bg),
@@ -340,7 +340,7 @@ def preparar_datos_recibo(
     items = []
     for lg in lineas_gasto:
         total_usd_conc = round(float(lg.get("total_usd", 0)), 2)
-        usd_unit       = round(total_usd_conc * alicuota, 4)
+        usd_unit       = round(total_usd_conc * alicuota, 2)
         items.append({
             "conc": lg.get("nombre") or "Sin descripción",
             "bs":   total_usd_conc,   # "Mes"    → total edificio USD
@@ -348,8 +348,8 @@ def preparar_datos_recibo(
         })
 
     # Totales: misma lógica — Mes = edificio total USD, Acum = parte unidad USD
-    tc_usd = round(total_gastos_usd * alicuota, 4)
-    fr_usd = round(fondo_reserva_usd * alicuota, 4)
+    tc_usd = round(total_gastos_usd * alicuota, 2)
+    fr_usd = round(fondo_reserva_usd * alicuota, 2)
 
     totals = [
         {"lbl": f"TOTAL GASTOS COMUNES {mes_nombre}",
@@ -357,7 +357,7 @@ def preparar_datos_recibo(
         {"lbl": "MAS: FONDO DE RESERVA 10%",
          "bs": round(fondo_reserva_usd, 2),       "usd": fr_usd},
         {"lbl": f"TOTAL GASTOS RELACIONADOS DEL MES {mes_nombre}",
-         "bs": round(total_relacionado_usd, 2),   "usd": round(total_relacionado_usd * alicuota, 4)},
+         "bs": round(total_relacionado_usd, 2),   "usd": round(total_relacionado_usd * alicuota, 2)},
         {"lbl": f"CUOTA MES {mes_nombre} EN DIVISA {anio}",
          "bs": round(total_relacionado_usd, 2),   "usd": cuota_mes_usd},
     ]

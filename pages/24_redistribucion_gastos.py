@@ -498,7 +498,7 @@ def _datos_recibo_unidad(u: dict) -> dict:
     else:
         cuota_bs  = round(_tr_rel_bs * alic_dec, 2)
         saldo_ant = float(u.get("saldo") or 0)
-    cuota_usd   = round(_tr_rel_usd * alic_dec, 4)
+    cuota_usd   = round(_tr_rel_usd * alic_dec, 2)
     saldo_nuevo = round(saldo_ant + cuota_bs, 2)
     return preparar_datos_recibo(
         condominio=condominio, unidad=u,
@@ -530,8 +530,8 @@ def _render_preview_recibo(d: dict) -> None:
             f"**Inmueble:** {d['inmueble']} &nbsp;·&nbsp; **Alícuota:** {d['alicuota_fmt']}%  \n"
             f"**Correo:** {d['email'] or '—'}  \n"
             f"**Emisión:** {d['emision']}  \n"
-            f"**Monto USD:** ${d['monto_usd']:,.4f} &nbsp;·&nbsp; "
-            f"**Acumulado:** ${d['acum_usd']:,.4f}",
+            f"**Monto USD:** ${d['monto_usd']:,.2f} &nbsp;·&nbsp; "
+            f"**Acumulado:** ${d['acum_usd']:,.2f}",
         )
 
     # Tabla de ítems
@@ -542,7 +542,7 @@ def _render_preview_recibo(d: dict) -> None:
             rows.append({
                 "CONCEPTO DE GASTOS": it["conc"],
                 "Mes US$":            round(float(it["bs"]),  2),
-                "Acum. 1":            round(float(it["usd"]), 4),
+                "Acum. 1":            round(float(it["usd"]), 2),
             })
         st.dataframe(
             rows,
@@ -551,7 +551,7 @@ def _render_preview_recibo(d: dict) -> None:
             column_config={
                 "CONCEPTO DE GASTOS": st.column_config.TextColumn(width="large"),
                 "Mes US$":            st.column_config.NumberColumn(format="$%.2f"),
-                "Acum. 1":            st.column_config.NumberColumn(format="$%.4f"),
+                "Acum. 1":            st.column_config.NumberColumn(format="$%.2f"),
             },
         )
 
@@ -560,7 +560,7 @@ def _render_preview_recibo(d: dict) -> None:
         is_cuota = "CUOTA" in str(tot.get("lbl", "")).upper()
         label = f"**{tot['lbl']}**" if is_cuota else tot["lbl"]
         bs_v  = f"${float(tot['bs']):,.2f}"  if tot.get("bs")  is not None else ""
-        usd_v = f"${float(tot['usd']):,.4f}" if tot.get("usd") is not None else ""
+        usd_v = f"${float(tot['usd']):,.2f}" if tot.get("usd") is not None else ""
         if is_cuota:
             st.markdown(
                 f"<div style='background:#2E74B5;color:white;padding:4px 8px;"

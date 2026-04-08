@@ -28,7 +28,7 @@ def _parse_rate(text: str) -> float:
     if len(parts) > 2:
         clean = "".join(parts[:-1]) + "." + parts[-1]
     try:
-        return round(float(clean), 4)
+        return round(float(clean), 2)
     except ValueError:
         return 0.0
 
@@ -92,7 +92,7 @@ def _fetch_from_dolarapi() -> float:
         # Estructura: {"promedio": 438.205, "fechaActualizacion": "..."}
         promedio = data.get("promedio") or data.get("tasa") or data.get("price")
         if promedio:
-            return round(float(promedio), 4)
+            return round(float(promedio), 2)
     except Exception:
         pass
     return 0.0

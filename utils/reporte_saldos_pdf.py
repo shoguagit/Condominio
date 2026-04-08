@@ -122,7 +122,7 @@ def _build_portada(
             "Equivalente USD",
             f"${total_usd:,.2f}" if tasa > 0 else "N/D",
         ],
-        ["Tasa BCV utilizada", f"Bs. {tasa:,.4f}" if tasa > 0 else "N/D"],
+        ["Tasa BCV utilizada", f"Bs. {tasa:,.2f}" if tasa > 0 else "N/D"],
     ]
     tr = Table(datos_resumen, colWidths=[3.2 * inch, 3.0 * inch])
     tr.setStyle(

@@ -321,5 +321,5 @@ st.divider()
 # ═══ SECCIÓN 5 — Pie ══════════════════════════════════════════════════════════
 st.caption(
     f"Última actualización: **{datetime.now().strftime('%d/%m/%Y %H:%M')}**  \n"
-    f"Tasa BCV: **Bs. {tasa:,.4f}**"
+    f"Tasa BCV: **Bs. {tasa:,.2f}**"
 )

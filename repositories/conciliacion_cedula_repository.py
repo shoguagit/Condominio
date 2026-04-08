@@ -271,7 +271,7 @@ class ConciliacionCedulaRepository:
 
         ref = (referencia or "").strip() or f"AUTO-{movimiento_id}"
         tc = float(tasa_cambio or 0)
-        m_usd = round(float(monto_bs) / tc, 4) if tc > 0 else 0.0
+        m_usd = round(float(monto_bs) / tc, 2) if tc > 0 else 0.0
 
         obs = (observaciones or "").strip()
         if len(obs) > 8000:

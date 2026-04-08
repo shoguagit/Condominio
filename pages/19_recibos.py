@@ -177,7 +177,7 @@ else:
         monto_usd = float(m.get("monto_usd") or 0)
         tasa      = float(m.get("tasa_cambio") or 0)
         if monto_usd == 0 and tasa > 0:
-            monto_usd = round(monto_bs / tasa, 4)
+            monto_usd = round(monto_bs / tasa, 2)
 
         if key not in lineas_dict:
             lineas_dict[key] = {"nombre": nombre, "total_bs": 0.0, "total_usd": 0.0, "tasa": tasa, "n": 0}
@@ -239,7 +239,7 @@ def _preparar_datos_pdf(unidad: dict) -> dict:
         cuota_mes_bs  = round(total_relacionado_bs * alicuota, 2)
         saldo_ant_bs  = float(unidad.get("saldo") or 0)
 
-    cuota_mes_usd = round(total_relacionado_usd * alicuota, 4)
+    cuota_mes_usd = round(total_relacionado_usd * alicuota, 2)
     saldo_nuevo   = round(saldo_ant_bs + cuota_mes_bs, 2)
 
     return preparar_datos_recibo(
@@ -317,13 +317,13 @@ def render_recibo(unidad: dict) -> None:
     else:
         data = []
         for l in lineas:
-            parte_usd = round(l["total_usd"] * alicuota, 4)
+            parte_usd = round(l["total_usd"] * alicuota, 2)
             parte_bs  = round(l["total_bs"]  * alicuota, 2)
             tasa_str  = f"{l['tasa']:,.2f}" if l["tasa"] > 0 else "—"
             data.append({
                 "CONCEPTO DE GASTOS": l["nombre"],
                 "Mes Acum. USD":      round(l["total_usd"], 2),
-                "Parte (USD)":        round(parte_usd, 4),
+                "Parte (USD)":        round(parte_usd, 2),
                 "Mes Acum. Bs.":      round(l["total_bs"],  2),
                 "Parte (Bs.)":        parte_bs,
                 "Tasa BCV":           tasa_str,
@@ -335,7 +335,7 @@ def render_recibo(unidad: dict) -> None:
             column_config={
                 "CONCEPTO DE GASTOS": st.column_config.TextColumn(width="large"),
                 "Mes Acum. USD":      st.column_config.NumberColumn(format="%.2f"),
-                "Parte (USD)":        st.column_config.NumberColumn(format="%.4f"),
+                "Parte (USD)":        st.column_config.NumberColumn(format="%.2f"),
                 "Mes Acum. Bs.":      st.column_config.NumberColumn(format="%.2f"),
                 "Parte (Bs.)":        st.column_config.NumberColumn(format="%.2f"),
                 "Tasa BCV":           st.column_config.TextColumn(width="small"),
@@ -344,16 +344,16 @@ def render_recibo(unidad: dict) -> None:
 
     # ── Totales ───────────────────────────────────────────────────
     tc_bs  = round(total_gastos_bs  * alicuota, 2)
-    tc_usd = round(total_gastos_usd * alicuota, 4)
+    tc_usd = round(total_gastos_usd * alicuota, 2)
     fr_bs  = round(fondo_reserva_bs  * alicuota, 2)
-    fr_usd = round(fondo_reserva_usd * alicuota, 4)
+    fr_usd = round(fondo_reserva_usd * alicuota, 2)
 
     st.markdown(
         f"""
 | | **Total mes** | **Esta unidad** |
 |---|---|---|
-| **TOTAL GASTOS COMUNES {mes_nombre}** | Bs. {total_gastos_bs:,.2f} / USD {total_gastos_usd:,.2f} | **Bs. {tc_bs:,.2f} / USD {tc_usd:,.4f}** |
-| **MÁS: FONDO DE RESERVA (10%)** | Bs. {fondo_reserva_bs:,.2f} / USD {fondo_reserva_usd:,.2f} | **Bs. {fr_bs:,.2f} / USD {fr_usd:,.4f}** |
+| **TOTAL GASTOS COMUNES {mes_nombre}** | Bs. {total_gastos_bs:,.2f} / USD {total_gastos_usd:,.2f} | **Bs. {tc_bs:,.2f} / USD {tc_usd:,.2f}** |
+| **MÁS: FONDO DE RESERVA (10%)** | Bs. {fondo_reserva_bs:,.2f} / USD {fondo_reserva_usd:,.2f} | **Bs. {fr_bs:,.2f} / USD {fr_usd:,.2f}** |
 | **TOTAL GASTOS RELACIONADOS** | Bs. {total_relacionado_bs:,.2f} / USD {total_relacionado_usd:,.2f} | |
 | **CUOTA MES {mes_nombre} EN DIVISAS** | | **USD {cuota_mes_usd:,.2f}** |
 | **CUOTA MES {mes_nombre} EN Bs.** | | **Bs. {cuota_mes_bs:,.2f}** |

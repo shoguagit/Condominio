@@ -247,7 +247,7 @@ _tc_prev, _lbl_prev = _tasa_bcv_hoy_o_sesion()
 monto_usd_calc = _monto_usd_desde_bs(monto_bs, _tc_prev) if _tc_prev > 0 else 0.0
 if _tc_prev > 0:
     st.caption(
-        f"≈ USD {monto_usd_calc:,.4f} (referencia: {_lbl_prev}, Bs. {_tc_prev:,.4f} / USD). "
+        f"≈ USD {monto_usd_calc:,.2f} (referencia: {_lbl_prev}, Bs. {_tc_prev:,.2f} / USD). "
         "Al **registrar**, se usa la tasa BCV oficial del **día de fecha de pago** del comprobante."
     )
 else:
@@ -259,7 +259,7 @@ else:
 st.markdown("### Resumen de cuenta (unidad seleccionada)")
 total_bs_fmt = f"{total_a_pagar:,.2f}"
 if _t_res > 0:
-    total_row_bs = f"Bs. {total_bs_fmt}  ≈ USD {total_a_pagar_usd:,.4f}"
+    total_row_bs = f"Bs. {total_bs_fmt}  ≈ USD {total_a_pagar_usd:,.2f}"
 else:
     total_row_bs = f"Bs. {total_bs_fmt}"
 
@@ -296,8 +296,8 @@ elif mora_monto == 0.0 and saldo_u <= 0:
     st.caption("_Intereses de mora: crédito a favor — sin mora._")
 if _t_res > 0:
     st.caption(
-        f"**TOTAL A PAGAR:** Bs. {total_a_pagar:,.2f} ≈ USD {total_a_pagar_usd:,.4f} "
-        f"(referencia Bs./USD: {_t_res:,.4f})"
+        f"**TOTAL A PAGAR:** Bs. {total_a_pagar:,.2f} ≈ USD {total_a_pagar_usd:,.2f} "
+        f"(referencia Bs./USD: {_t_res:,.2f})"
     )
 
 st.markdown("### Datos del comprobante")
@@ -386,8 +386,8 @@ else:
         musd = float(h.get("monto_usd") or 0)
         tc_row = float(h.get("tasa_cambio") or 0)
         if musd == 0 and tc_row > 0 and mbs > 0:
-            musd = round(mbs / tc_row, 4)
-        tasa_txt = f"{tc_row:,.4f}" if tc_row > 0 else "—"
+            musd = round(mbs / tc_row, 2)
+        tasa_txt = f"{tc_row:,.2f}" if tc_row > 0 else "—"
         rows.append(
             {
                 "id": h.get("id"),
@@ -397,7 +397,7 @@ else:
                 "referencia": h.get("referencia") or "—",
                 "monto_bs": f"{mbs:,.2f}",
                 "Tasa aplicada (Bs./USD)": tasa_txt,
-                "monto_usd": f"{musd:,.4f}",
+                "monto_usd": f"{musd:,.2f}",
                 "estado": h.get("estado"),
             }
         )

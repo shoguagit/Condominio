@@ -436,7 +436,7 @@ else:
     m5.metric("🔍 Alertas coherencia", 0)
 
 if tasa_cfg > 0:
-    st.caption(f"Tasa BCV (referencia condominio): **Bs. {tasa_cfg:,.4f}**")
+    st.caption(f"Tasa BCV (referencia condominio): **Bs. {tasa_cfg:,.2f}**")
 
 # ═══════════════════════════════════════════════════════════════════════════
 # PASO 4: ALERTAS DE COHERENCIA

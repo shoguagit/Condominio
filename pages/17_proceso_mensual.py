@@ -205,7 +205,7 @@ if _edit_gasto_id and not cerrado:
             if not edit_desc.strip():
                 st.error("❌ La descripción es obligatoria.")
             else:
-                _usd_e = round(float(edit_monto) / _tasa_g, 4) if _tasa_g > 0 else 0.0
+                _usd_e = round(float(edit_monto) / _tasa_g, 2) if _tasa_g > 0 else 0.0
                 try:
                     repo_mov.update(
                         int(_edit_gasto_id),
@@ -251,7 +251,7 @@ if not cerrado and not _edit_gasto_id:
             if not add_desc.strip():
                 st.error("❌ La descripción es obligatoria.")
             else:
-                _usd_a = round(float(add_monto) / _tasa_g, 4) if _tasa_g > 0 else 0.0
+                _usd_a = round(float(add_monto) / _tasa_g, 2) if _tasa_g > 0 else 0.0
                 try:
                     repo_mov.create(
                         {
@@ -476,7 +476,7 @@ if not cerrado:
                                 "Descripción": f["descripcion"],
                                 "Bs.": f"{f['monto_bs']:,.2f}",
                                 "Tasa BCV": f"{tasa_fd:,.2f}" if tasa_fd > 0 else "—",
-                                "USD": f"{usd_v:,.4f}" if tasa_fd > 0 else "—",
+                                "USD": f"{usd_v:,.2f}" if tasa_fd > 0 else "—",
                             })
 
                         total_imp = round(sum(f["monto_bs"] for f in filas_prev), 2)
@@ -497,7 +497,7 @@ if not cerrado:
                             for f in filas_prev:
                                 try:
                                     tasa_fd = _bcv_cache.get(str(f["fecha"]), 0.0)
-                                    usd_v = round(f["monto_bs"] / tasa_fd, 4) if tasa_fd > 0 else 0.0
+                                    usd_v = round(f["monto_bs"] / tasa_fd, 2) if tasa_fd > 0 else 0.0
                                     _c2.table("movimientos").insert({
                                         "condominio_id": condominio_id,
                                         "periodo": periodo_db,

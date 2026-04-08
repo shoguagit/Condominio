@@ -543,7 +543,7 @@ with col_main:
                 st.markdown(f"**Teléfono**: {current_rec.get('telefono') or '—'}")
                 st.markdown(f"**Email**: {current_rec.get('email') or '—'}")
                 st.markdown(f"**Moneda**: {current_rec.get('moneda_principal') or '—'}")
-                st.markdown(f"**Tasa BCV**: Bs. {float(tasa):,.4f}")
+                st.markdown(f"**Tasa BCV**: Bs. {float(tasa):,.2f}")
                 st.markdown(f"**Estado**: {estado}")
                 dlp = current_rec.get("dia_limite_pago")
                 st.markdown(

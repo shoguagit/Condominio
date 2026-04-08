@@ -125,5 +125,5 @@ def tasa_bcv_bs_por_usd_para_fecha(fecha_pago: date | str) -> tuple[float | None
 
 def monto_usd_desde_bs(monto_bs: float, tasa_bs_por_usd: float) -> float:
     if tasa_bs_por_usd and tasa_bs_por_usd > 0:
-        return round(float(monto_bs) / float(tasa_bs_por_usd), 4)
+        return round(float(monto_bs) / float(tasa_bs_por_usd), 2)
     return 0.0

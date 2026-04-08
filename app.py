@@ -272,7 +272,7 @@ st.markdown(
         </div>
         <div class="kpi-item">
             <div class="kpi-lbl">Tasa BCV (USD/VES)</div>
-            <div class="kpi-val" style="color:{tasa_color};">Bs. {tasa:,.4f}</div>
+            <div class="kpi-val" style="color:{tasa_color};">Bs. {tasa:,.2f}</div>
             {fuente_tag}
         </div>
         <div class="kpi-item">
