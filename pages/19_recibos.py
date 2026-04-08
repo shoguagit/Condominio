@@ -11,6 +11,7 @@ from repositories.condominio_repository import CondominioRepository
 from repositories.unidad_repository import UnidadRepository
 from repositories.movimiento_repository import MovimientoRepository
 from repositories.proceso_repository import ProcesoMensualRepository
+from repositories.agrupacion_gasto_repository import AgrupacionGastoRepository
 from utils.auth import check_authentication, require_condominio
 from utils.error_handler import DatabaseError
 from utils.validators import validate_periodo, periodo_to_date_str
@@ -39,12 +40,16 @@ def get_repos():
         UnidadRepository(client),
         MovimientoRepository(client),
         ProcesoMensualRepository(client),
+        AgrupacionGastoRepository(client),
     )
 
 
-repo_cond, repo_uni, repo_mov, repo_proc = get_repos()
+repo_cond, repo_uni, repo_mov, repo_proc, repo_agr = get_repos()
 
 st.markdown("## 🧾 Relación de Gastos (Recibo)")
+
+# Banner informativo sobre el modo de datos (se muestra después de cargar agrupaciones)
+_banner_placeholder = st.empty()
 
 # ── Período ────────────────────────────────────────────────────────
 periodo = st.text_input(
@@ -119,50 +124,71 @@ except DatabaseError as e:
 
 egresos = [m for m in movimientos if m.get("tipo") == "egreso"]
 
-# Construir líneas del recibo:
-# - Si el movimiento tiene concepto_id → agrupar por concepto_id + nombre del catálogo
-# - Si no tiene concepto_id → cada descripción es su propia línea (gastos importados)
-# Clave de agrupación: (concepto_id, descripcion_normalizada)
-lineas_dict: dict[tuple, dict] = {}
-for m in egresos:
-    cid = m.get("concepto_id")
-    if cid is not None:
-        # Gasto con concepto del catálogo → agrupar todos los del mismo concepto
-        con = m.get("conceptos") or {}
-        nombre = (con.get("nombre") or "Sin concepto").strip()
-        key = (cid, None)
-    else:
-        # Gasto libre (importado o manual) → cada descripción es su propia línea
-        nombre = (m.get("descripcion") or "Sin descripción").strip()
-        key = (None, nombre)
+# ── Comprobar si hay agrupaciones guardadas (de Redistribución de Gastos) ──
+try:
+    agrupaciones_guardadas = repo_agr.get(condominio_id, periodo_db)
+except Exception:
+    agrupaciones_guardadas = None
 
-    monto_bs = float(m.get("monto_bs") or 0)
-    monto_usd = float(m.get("monto_usd") or 0)
-    tasa = float(m.get("tasa_cambio") or 0)
-    # Si no tiene monto_usd pero tiene tasa, calcularlo
-    if monto_usd == 0 and tasa > 0:
-        monto_usd = round(monto_bs / tasa, 4)
+usando_agrupaciones = bool(agrupaciones_guardadas)
 
-    if key not in lineas_dict:
-        lineas_dict[key] = {
-            "nombre": nombre,
-            "total_bs": 0.0,
-            "total_usd": 0.0,
-            "tasa": tasa,
-            "n": 0,
+if usando_agrupaciones:
+    _banner_placeholder.success(
+        f"✅ Usando **{len(agrupaciones_guardadas)} grupos consolidados** "
+        f"de Redistribución de Gastos para el período {mes_nombre} {anio}. "
+        "Solo aparecen los grupos marcados como **📄 Recibo**."
+    )
+else:
+    _banner_placeholder.info(
+        "ℹ️ Mostrando egresos sin consolidar. "
+        "Para agrupar conceptos y elegir qué va al recibo, "
+        "usa el módulo **🔄 Redistribución de Gastos**."
+    )
+
+if usando_agrupaciones:
+    # Usar solo grupos marcados para Recibo
+    lineas = [
+        {
+            "nombre":    g["nombre"],
+            "total_bs":  float(g.get("total_bs",  0) or 0),
+            "total_usd": float(g.get("total_usd", 0) or 0),
+            "tasa":      0.0,
         }
-    lineas_dict[key]["total_bs"]  += monto_bs
-    lineas_dict[key]["total_usd"] += monto_usd
-    lineas_dict[key]["n"] += 1
-    # Para conceptos agrupados, la tasa pierde sentido; dejamos 0 como señal de "múltiples"
-    if lineas_dict[key]["n"] > 1 and cid is not None:
-        lineas_dict[key]["tasa"] = 0.0
+        for g in agrupaciones_guardadas
+        if g.get("recibo", True) and float(g.get("total_bs", 0) or 0) != 0
+    ]
+    lineas.sort(key=lambda x: (-x["total_bs"], x["nombre"]))
+else:
+    # Construir líneas del recibo desde los movimientos crudos:
+    # - Si tiene concepto_id → agrupar por concepto
+    # - Si no → cada descripción es su propia línea (gastos importados)
+    lineas_dict: dict[tuple, dict] = {}
+    for m in egresos:
+        cid = m.get("concepto_id")
+        if cid is not None:
+            con = m.get("conceptos") or {}
+            nombre = (con.get("nombre") or "Sin concepto").strip()
+            key: tuple = (cid, None)
+        else:
+            nombre = (m.get("descripcion") or "Sin descripción").strip()
+            key = (None, nombre)
 
-lineas = sorted(
-    lineas_dict.values(),
-    key=lambda x: (-x["total_bs"], x["nombre"]),
-)
-lineas = [l for l in lineas if l["total_bs"] != 0]
+        monto_bs  = float(m.get("monto_bs")  or 0)
+        monto_usd = float(m.get("monto_usd") or 0)
+        tasa      = float(m.get("tasa_cambio") or 0)
+        if monto_usd == 0 and tasa > 0:
+            monto_usd = round(monto_bs / tasa, 4)
+
+        if key not in lineas_dict:
+            lineas_dict[key] = {"nombre": nombre, "total_bs": 0.0, "total_usd": 0.0, "tasa": tasa, "n": 0}
+        lineas_dict[key]["total_bs"]  += monto_bs
+        lineas_dict[key]["total_usd"] += monto_usd
+        lineas_dict[key]["n"] += 1
+        if lineas_dict[key]["n"] > 1 and cid is not None:
+            lineas_dict[key]["tasa"] = 0.0
+
+    lineas = sorted(lineas_dict.values(), key=lambda x: (-x["total_bs"], x["nombre"]))
+    lineas = [l for l in lineas if l["total_bs"] != 0]
 
 total_gastos_bs  = round(sum(l["total_bs"]  for l in lineas), 2)
 total_gastos_usd = round(sum(l["total_usd"] for l in lineas), 2)
