@@ -431,6 +431,17 @@ st.info(
     f"**Fórmula:** {_n_items_now} ítems − {_n_grupos_now} grupos = **{_n_diff_now}** "
     "(filas adicionales por consolidación; no faltan movimientos en la base)."
 )
+with st.expander("¿Cómo funciona la **categoría** (Paso 2)?", expanded=False):
+    st.markdown(
+        """
+- La **subcategoría** (Nómina › Personal, Mantenimiento › Materiales, etc.) es **solo una etiqueta**
+  para informes y orden en PDF: **no quita egresos** ni cambia montos.
+- Se sugiere **por grupo**: el sistema junta las descripciones originales de los ítems de ese **Grupo**
+  y busca **palabras clave** (las que configuraste en **Categorías** + las del seed). Podés cambiarla a mano en el desplegable.
+- **Los N egresos del período** (p. ej. 119) se cargan todos desde **Proceso mensual**; cada uno entra en **un solo grupo**
+  al consolidar. La categoría no filtra filas.
+        """
+    )
 
 # Sincronizar dest_state y cat_state: añadir nuevos grupos, mantener flags
 grupos_nuevos = set(asig_state.values())
@@ -449,6 +460,18 @@ for gn in grupos_nuevos:
 
 # Grupos consolidados (preview)
 grupos_consolidados = _calcular_grupos(egresos, asig_state, dest_state, cat_state)
+
+_n_mov_en_grupos = sum(len(g["movimiento_ids"]) for g in grupos_consolidados)
+if _n_mov_en_grupos == len(egresos):
+    st.success(
+        f"**Cobertura:** los **{len(egresos)}** egresos del período están en el consolidado "
+        f"({_n_mov_en_grupos} movimientos contados en grupos). Nada queda fuera por categoría."
+    )
+else:
+    st.error(
+        f"Inconsistencia: hay **{len(egresos)}** egresos pero los grupos suman "
+        f"**{_n_mov_en_grupos}** movimientos. Recarga o revisa datos."
+    )
 
 # Ítems que explican (N ítems − N grupos): por cada grupo con varios movimientos,
 # todos menos el primero (orden por ID) — son las filas “adicionales” por consolidación.
