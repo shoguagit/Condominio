@@ -14,6 +14,7 @@ from __future__ import annotations
 import difflib
 import json
 import re
+from collections import defaultdict
 from typing import Any
 
 import pandas as pd
@@ -403,6 +404,92 @@ for gn in grupos_nuevos:
 
 # Grupos consolidados (preview)
 grupos_consolidados = _calcular_grupos(egresos, asig_state, dest_state, cat_state)
+
+# ── Diagnóstico: cuadre + ítems fusionados (119 ítems ≠ 104 grupos es normal) ──
+_sum_raw_bs  = round(sum(float(m.get("monto_bs")  or 0) for m in egresos), 2)
+_sum_raw_usd = round(sum(float(m.get("monto_usd") or 0) for m in egresos), 2)
+_sum_grp_bs  = round(sum(g["total_bs"]  for g in grupos_consolidados), 2)
+_sum_grp_usd = round(sum(g["total_usd"] for g in grupos_consolidados), 2)
+_diff_bs     = round(_sum_raw_bs - _sum_grp_bs, 2)
+_diff_usd    = round(_sum_raw_usd - _sum_grp_usd, 2)
+_n_items     = len(egresos)
+_n_grupos    = len({asig_state.get(m["id"], "—") for m in egresos})
+_n_comparten = _n_items - _n_grupos  # ítems que van “de más” al compartir grupo
+
+_inv_por_grupo: defaultdict[str, list[dict]] = defaultdict(list)
+for m in egresos:
+    gn = asig_state.get(m["id"], "—")
+    _inv_por_grupo[gn].append(m)
+
+_grupos_multiples = [
+    {"Grupo": nombre, "N ítems": len(rows), "IDs": ", ".join(str(x["id"]) for x in rows)}
+    for nombre, rows in sorted(_inv_por_grupo.items(), key=lambda x: -len(x[1]))
+    if len(rows) > 1
+]
+
+with st.expander(
+    "🔎 Diagnóstico: cuadre de totales e ítems que comparten grupo",
+    expanded=False,
+):
+    st.markdown(
+        f"**Ítems en pantalla:** {_n_items} movimientos de egreso en este período.  \n"
+        f"**Grupos distintos:** {_n_grupos} nombres de grupo.  \n"
+        f"**Diferencia {_n_items} − {_n_grupos} = {_n_comparten}** → son ítems que "
+        "**comparten el mismo nombre de grupo** con otro (consolidados), "
+        "**no** son movimientos faltantes."
+    )
+    if _diff_bs != 0.0 or _diff_usd != 0.0:
+        st.error(
+            f"⚠️ **Descuadre en sumas** (revisar datos en base): "
+            f"egresos Bs. {_sum_raw_bs:,.2f} vs grupos Bs. {_sum_grp_bs:,.2f} (Δ {_diff_bs:,.2f}); "
+            f"USD {_sum_raw_usd:,.2f} vs {_sum_grp_usd:,.2f} (Δ {_diff_usd:,.2f})."
+        )
+    else:
+        st.success(
+            f"✅ **Cuadre:** la suma de todos los egresos coincide con la suma de los grupos "
+            f"(Bs. {_sum_raw_bs:,.2f} | USD {_sum_raw_usd:,.2f}). Ningún monto queda fuera."
+        )
+
+    if _grupos_multiples:
+        st.markdown(
+            f"**Grupos con más de un ítem** ({len(_grupos_multiples)} grupos, "
+            f"{_n_comparten} ítems “extra” por consolidación):"
+        )
+        st.dataframe(
+            pd.DataFrame(_grupos_multiples),
+            use_container_width=True,
+            hide_index=True,
+            column_config={
+                "Grupo":   st.column_config.TextColumn(width="large"),
+                "N ítems": st.column_config.NumberColumn(width="small"),
+                "IDs":     st.column_config.TextColumn(width="large"),
+            },
+        )
+        _detalle = []
+        for nombre, rows in sorted(_inv_por_grupo.items(), key=lambda x: -len(x[1])):
+            if len(rows) <= 1:
+                continue
+            for r in rows:
+                _detalle.append({
+                    "ID": r["id"],
+                    "Grupo": nombre,
+                    "Descripción": (r.get("descripcion") or "")[:120],
+                    "Bs.": round(float(r.get("monto_bs") or 0), 2),
+                })
+        with st.expander("Ver cada movimiento fusionado (ID + descripción + Bs.)", expanded=False):
+            st.dataframe(
+                pd.DataFrame(_detalle),
+                use_container_width=True,
+                hide_index=True,
+            )
+    else:
+        st.info("Todos los grupos tienen un solo ítem (ninguna consolidación en este momento).")
+
+    st.caption(
+        "Si el **Recibo** o el **Balance** no cuadran con el total del período, suele ser porque "
+        "en el **Paso 2** algún grupo tiene desmarcado 📄 Recibo o 📊 Balance: esos montos "
+        "no entran en ese PDF (no es un ítem perdido en el Paso 1)."
+    )
 
 with st.expander("👁️ Vista previa de grupos consolidados", expanded=False):
     df_grupos = pd.DataFrame([
