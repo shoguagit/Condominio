@@ -321,13 +321,7 @@ st.markdown(
     help="Edita la columna **Grupo** para consolidar ítems similares en un solo concepto.",
 )
 
-col_info, col_btn = st.columns([5, 2])
-with col_info:
-    grupos_actuales = sorted(set(asig_state.values()))
-    st.caption(
-        f"{len(egresos)} ítems → **{len(grupos_actuales)} grupos** detectados. "
-        "Edita la columna **Grupo** para renombrar o consolidar."
-    )
+_, col_btn = st.columns([5, 2])
 with col_btn:
     if st.button("🔁 Re-sugerir grupos automáticamente", use_container_width=True):
         descs = [e.get("descripcion") or "" for e in egresos]
@@ -361,9 +355,6 @@ df_raw = pd.DataFrame([
     for m in egresos
 ])
 
-# Lista de grupos existentes para mostrar como hints
-grupos_lista = sorted(set(asig_state.values()))
-
 edited_df = st.data_editor(
     df_raw,
     column_config={
@@ -385,6 +376,17 @@ edited_df = st.data_editor(
 # Actualizar asig_state con lo que editó el usuario
 for _, row in edited_df.iterrows():
     asig_state[int(row["ID"])] = str(row["Grupo"] or "—").strip()
+
+# Conteo coherente con la tabla (después del editor — mismo dato que la lista de 15)
+_n_items_now  = len(egresos)
+_n_grupos_now = len(set(asig_state.values()))
+_n_diff_now   = _n_items_now - _n_grupos_now
+
+st.caption(
+    f"{_n_items_now} ítems → **{_n_grupos_now} grupos** distintos "
+    f"(**{_n_diff_now} ítems** comparten grupo con otro; "
+    f"no hay movimientos faltantes). Edita **Grupo** para renombrar o separar."
+)
 
 # Sincronizar dest_state y cat_state: añadir nuevos grupos, mantener flags
 grupos_nuevos = set(asig_state.values())
@@ -424,18 +426,14 @@ for _rows in _por_grupo.values():
             "USD":         round(float(_r.get("monto_usd") or 0), 2),
         })
 
-_n_items  = len(egresos)
-_n_grupos = len(_por_grupo)
-_n_diff   = _n_items - _n_grupos
-
 with st.expander(
-    f"📋 Ítems de la diferencia ({_n_items} − {_n_grupos} = {_n_diff}) — edita el **Grupo** arriba por ID",
+    f"📋 Solo estos {_n_diff_now} ítems (los que “sobran” al consolidar) — busca el **ID** en la tabla de arriba",
     expanded=bool(_filas_diff),
 ):
     st.caption(
-        "Son los movimientos **extra** que comparten nombre de grupo con otro (el **primer** ID "
-        "de cada grupo no aparece aquí). Si quieres líneas separadas en recibo/balance, "
-        "cambia **Grupo** en la tabla principal buscando el **ID**."
+        f"**No faltan movimientos:** los {_n_diff_now} ítems de abajo son los que **repiten** nombre de "
+        "grupo con otro. En cada grupo solo mostramos aquí los que no son el **primer ID** (orden numérico). "
+        "Si quieres **119 líneas distintas** en el recibo, pon un **Grupo** distinto a cada uno."
     )
     if _filas_diff:
         st.dataframe(
