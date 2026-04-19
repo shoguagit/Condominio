@@ -124,6 +124,21 @@ except DatabaseError as e:
 
 egresos = [m for m in movimientos if m.get("tipo") == "egreso"]
 
+
+def _monto_bs_movimiento(m: dict) -> float:
+    return float(m.get("monto_bs") or 0)
+
+
+def _monto_usd_movimiento(m: dict) -> float:
+    """Coherente con Proceso/Redistribución: USD explícito o Bs / tasa."""
+    u = float(m.get("monto_usd") or 0)
+    if u == 0:
+        t = float(m.get("tasa_cambio") or 0)
+        if t > 0:
+            return round(_monto_bs_movimiento(m) / t, 2)
+    return u
+
+
 # ── Comprobar si hay agrupaciones guardadas (de Redistribución de Gastos) ──
 try:
     agrupaciones_guardadas = repo_agr.get(condominio_id, periodo_db)
@@ -196,6 +211,112 @@ fondo_reserva_bs  = round(total_gastos_bs  * 0.10, 2)
 fondo_reserva_usd = round(total_gastos_usd * 0.10, 2)
 total_relacionado_bs  = round(total_gastos_bs  + fondo_reserva_bs,  2)
 total_relacionado_usd = round(total_gastos_usd + fondo_reserva_usd, 2)
+
+# ── Auditoría: todos los egresos vs lo que entra al TOTAL GASTOS COMUNES ───────
+# El recibo NO suma “119 líneas”: suma grupos con 📄 Recibo. La diferencia con el
+# administrador suele ser grupos sin recibo o agrupación desactualizada.
+_n_egresos = len(egresos)
+_sum_usd_todos_mov = round(sum(_monto_usd_movimiento(m) for m in egresos), 2)
+_gap_usd_vs_recibo = round(_sum_usd_todos_mov - total_gastos_usd, 2)
+
+_aud_fuera_recibo: list[dict] = []
+_aud_ids_guardado: set[int] = set()
+_sum_usd_grupos_json: float | None = None
+if usando_agrupaciones and agrupaciones_guardadas:
+    _su_g = 0.0
+    for g in agrupaciones_guardadas:
+        _su_g += float(g.get("total_usd", 0) or 0)
+        for mid in g.get("movimiento_ids") or []:
+            _aud_ids_guardado.add(int(mid))
+        if not g.get("recibo", True):
+            _aud_fuera_recibo.append({
+                "Grupo":     str(g.get("nombre") or "—"),
+                "Total USD": round(float(g.get("total_usd", 0) or 0), 2),
+                "Total Bs.": round(float(g.get("total_bs", 0) or 0), 2),
+            })
+    _sum_usd_grupos_json = round(_su_g, 2)
+    _aud_fuera_recibo.sort(key=lambda x: (-x["Total USD"], x["Grupo"]))
+
+_sum_usd_fuera_marcado = round(sum(r["Total USD"] for r in _aud_fuera_recibo), 2)
+_ids_egreso_actual = {int(m["id"]) for m in egresos}
+_faltan_en_guardado = sorted(_ids_egreso_actual - _aud_ids_guardado)
+_sobran_en_guardado = sorted(_aud_ids_guardado - _ids_egreso_actual)
+
+st.markdown("##### Concordancia de montos")
+_ac1, _ac2, _ac3, _ac4 = st.columns(4)
+_ac1.metric(
+    "Ítems egreso (período)",
+    _n_egresos,
+    help="Cantidad de movimientos tipo egreso cargados para este período.",
+)
+_ac2.metric(
+    "Suma USD (todos los egresos)",
+    _sum_usd_todos_mov,
+    help="Suma de montos USD de cada egreso (o Bs÷tasa si no hay USD). Es la base del mes.",
+)
+_ac3.metric(
+    "Suma USD en TOTAL GASTOS COMUNES",
+    total_gastos_usd,
+    help="Lo que usa el recibo: con agrupación, solo grupos con 📄 Recibo y monto Bs ≠ 0.",
+)
+_ac4.metric(
+    "USD no en el recibo (gap)",
+    _gap_usd_vs_recibo,
+    help="Todos los egresos menos el total del recibo. Con agrupación suele ser lo marcado sin 📄 Recibo.",
+)
+
+if usando_agrupaciones and _aud_fuera_recibo:
+    st.warning(
+        f"Hay **{len(_aud_fuera_recibo)} grupo(s)** con **📄 Recibo desmarcado** en Redistribución "
+        f"(~**USD {_sum_usd_fuera_marcado:,.2f}** no entran al total del recibo). "
+        "Eso explica diferencias frente a una suma “de todo el mes” si el administrador incluye esos conceptos."
+    )
+    with st.expander("Ver grupos excluidos del recibo (📄 desmarcado)", expanded=False):
+        st.dataframe(
+            _aud_fuera_recibo,
+            use_container_width=True,
+            hide_index=True,
+            column_config={
+                "Grupo":     st.column_config.TextColumn(width="large"),
+                "Total USD": st.column_config.NumberColumn(format="%.2f"),
+                "Total Bs.": st.column_config.NumberColumn(format="%.2f"),
+            },
+        )
+elif not usando_agrupaciones and abs(_gap_usd_vs_recibo) > 0.02:
+    _cero = [m for m in egresos if _monto_bs_movimiento(m) == 0 and _monto_usd_movimiento(m) != 0]
+    st.caption(
+        f"Hay **USD {_gap_usd_vs_recibo:,.2f}** de egresos que no entran al recibo porque "
+        f"la línea se arma solo con montos Bs ≠ 0 ({len(_cero)} movimiento(s) con Bs. 0). "
+        "Revisa esos egresos en Proceso Mensual."
+    )
+
+if usando_agrupaciones and agrupaciones_guardadas:
+    if _faltan_en_guardado:
+        st.error(
+            f"⚠️ La última **Guardar agrupaciones** no incluye **{len(_faltan_en_guardado)}** movimiento(s) "
+            f"que ya están en el período (IDs de ejemplo: {_faltan_en_guardado[:8]}{'…' if len(_faltan_en_guardado) > 8 else ''}). "
+            "Abre **Redistribución de Gastos** y pulsa **Guardar agrupaciones** otra vez para alinear totales."
+        )
+    if _sobran_en_guardado:
+        st.warning(
+            f"Hay **{len(_sobran_en_guardado)}** ID(s) en la agrupación guardada que ya no están en este período. "
+            "Vuelve a guardar desde Redistribución."
+        )
+    if (
+        _sum_usd_grupos_json is not None
+        and abs(_sum_usd_grupos_json - _sum_usd_todos_mov) > 0.05
+    ):
+        st.warning(
+            f"La suma USD de los **grupos guardados** (USD {_sum_usd_grupos_json:,.2f}) no coincide con la "
+            f"suma de **egresos actuales** (USD {_sum_usd_todos_mov:,.2f}). "
+            "Suele pasar si se editaron gastos después de guardar: **Guardar agrupaciones** de nuevo."
+        )
+
+st.caption(
+    "**Nota:** En Redistribución, “119 ítems y 60 grupos” solo indica cuántos conceptos consolidaste; "
+    "**no** significa que falten movimientos. Las **palabras clave** solo ayudan a sugerir categoría, "
+    "no filtran egresos del recibo."
+)
 
 # ── Cuotas calculadas (si ya se generaron) ─────────────────────────
 try:
