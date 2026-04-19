@@ -496,6 +496,7 @@ def render_sidebar() -> None:
         st.page_link("pages/06_conceptos.py",         label="📋  Conceptos")
         st.page_link("pages/05_servicios.py",         label="🔧  Servicios")
         st.page_link("pages/07_gastos_fijos.py",      label="📌  Gastos Fijos")
+        st.page_link("pages/25_categorias.py",        label="🏷️  Categorías de Gastos")
 
         _group("Operación mensual")
         st.page_link("pages/20_pagos.py",             label="💳  Pagos y Cobros")

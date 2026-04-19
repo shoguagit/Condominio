@@ -334,6 +334,16 @@ def preparar_datos_recibo(
     alic_fmt = f"{float(unidad.get('indiviso_pct') or 0):.2f}".replace(".", ",")
     mes_v = f"{mes_nombre} {anio}"
 
+    # Ordenar líneas por categoría: Nómina → Servicios → Mantenimiento → Otros → sin categoría
+    _CAT_ORDEN = {"NOMINA": 1, "SERVICIOS": 2, "MANTENIMIENTO": 3, "OTROS": 4}
+    lineas_gasto = sorted(
+        lineas_gasto,
+        key=lambda x: (
+            _CAT_ORDEN.get(x.get("categoria_codigo"), 5),
+            x.get("nombre", ""),
+        ),
+    )
+
     # Columna "Mes"    = total del EDIFICIO en USD para ese concepto.
     # Acum.1 = round(total_usd × alícuota, 2)  → parte de esta unidad
     # Mes    = round(Acum.1 / alícuota, 2)      → back-calculado desde el valor ya redondeado

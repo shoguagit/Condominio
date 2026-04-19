@@ -25,6 +25,7 @@ from repositories.movimiento_repository import MovimientoRepository
 from repositories.proceso_repository import ProcesoMensualRepository
 from repositories.agrupacion_gasto_repository import AgrupacionGastoRepository
 from repositories.unidad_repository import UnidadRepository
+from repositories.categoria_gasto_repository import CategoriaGastoRepository
 from utils.auth import check_authentication, require_condominio
 from utils.error_handler import DatabaseError
 from utils.validators import validate_periodo, periodo_to_date_str
@@ -53,9 +54,10 @@ def get_repos():
         ProcesoMensualRepository(client),
         AgrupacionGastoRepository(client),
         UnidadRepository(client),
+        CategoriaGastoRepository(client),
     )
 
-repo_cond, repo_mov, repo_proc, repo_agr, repo_uni = get_repos()
+repo_cond, repo_mov, repo_proc, repo_agr, repo_uni, repo_cat = get_repos()
 
 
 # ── Algoritmo de agrupación automática ────────────────────────────────────────
@@ -127,18 +129,26 @@ def _sk(key: str, periodo: str) -> str:
     return f"_agr_{key}_{periodo}"
 
 
-def _inicializar_estado(periodo: str, egresos: list[dict], guardado: list[dict] | None) -> None:
-    """Inicializa/restaura los dicts de asignación y destino en session_state."""
-    sk_asig = _sk("asig", periodo)    # {mov_id: grupo_nombre}
-    sk_dest = _sk("dest", periodo)    # {grupo_nombre: {recibo, balance}}
+def _inicializar_estado(
+    periodo: str,
+    egresos: list[dict],
+    guardado: list[dict] | None,
+    subcats: list[dict],
+    palabras: list[dict],
+) -> None:
+    """Inicializa/restaura los dicts de asignación, destino y categoría en session_state."""
+    sk_asig = _sk("asig",  periodo)   # {mov_id: grupo_nombre}
+    sk_dest = _sk("dest",  periodo)   # {grupo_nombre: {recibo, balance}}
+    sk_cat  = _sk("cat",   periodo)   # {grupo_nombre: subcategoria_codigo}
 
     if sk_asig in st.session_state:
         return  # ya inicializado
 
     if guardado:
         # Restaurar desde DB
-        asig: dict[int, str] = {}
-        dest: dict[str, dict] = {}
+        asig: dict[int, str]    = {}
+        dest: dict[str, dict]   = {}
+        cats: dict[str, str]    = {}
         for g in guardado:
             for mid in g.get("movimiento_ids") or []:
                 asig[int(mid)] = g["nombre"]
@@ -146,21 +156,40 @@ def _inicializar_estado(periodo: str, egresos: list[dict], guardado: list[dict] 
                 "recibo":  bool(g.get("recibo",  True)),
                 "balance": bool(g.get("balance", True)),
             }
+            cats[g["nombre"]] = g.get("subcategoria_codigo", "OTROS_SIN_CLASIFICAR")
         st.session_state[sk_asig] = asig
         st.session_state[sk_dest] = dest
+        st.session_state[sk_cat]  = cats
     else:
-        # Auto-sugerir
-        descs = [m.get("descripcion") or "" for m in egresos]
+        # Auto-sugerir agrupaciones y categorías
+        descs     = [m.get("descripcion") or "" for m in egresos]
         sugeridos = sugerir_grupos(descs)
         asig = {m["id"]: sugeridos.get(m.get("descripcion") or "", m.get("descripcion") or "")
                 for m in egresos}
         dest = {g: {"recibo": True, "balance": True} for g in set(asig.values())}
+
+        # Sugerir categoría para cada grupo usando sus descripciones originales
+        cats = {}
+        for grupo_nombre in set(asig.values()):
+            # Concatenar todas las descripciones de este grupo para mejor contexto
+            descs_grupo = " ".join(
+                m.get("descripcion") or "" for m in egresos
+                if asig.get(m["id"]) == grupo_nombre
+            )
+            sug = repo_cat.sugerir_subcategoria(
+                0, descs_grupo, subcats=subcats, palabras=palabras
+            )
+            cats[grupo_nombre] = sug["subcategoria_codigo"] if sug else "OTROS_SIN_CLASIFICAR"
+
         st.session_state[sk_asig] = asig
         st.session_state[sk_dest] = dest
+        st.session_state[sk_cat]  = cats
 
 
-def _calcular_grupos(egresos: list[dict], asig: dict, dest: dict) -> list[dict]:
-    """Consolida egresos por grupo y adjunta flags de destino."""
+def _calcular_grupos(
+    egresos: list[dict], asig: dict, dest: dict, cats: dict | None = None
+) -> list[dict]:
+    """Consolida egresos por grupo y adjunta flags de destino y subcategoría."""
     acc: dict[str, dict] = {}
     for m in egresos:
         nombre = asig.get(m["id"], m.get("descripcion") or "—")
@@ -173,7 +202,13 @@ def _calcular_grupos(egresos: list[dict], asig: dict, dest: dict) -> list[dict]:
     grupos: list[dict] = []
     for nombre, g in acc.items():
         d = dest.get(nombre, {"recibo": True, "balance": True})
-        grupos.append({**g, "recibo": d["recibo"], "balance": d["balance"]})
+        subcat_codigo = (cats or {}).get(nombre, "OTROS_SIN_CLASIFICAR")
+        grupos.append({
+            **g,
+            "recibo":             d["recibo"],
+            "balance":            d["balance"],
+            "subcategoria_codigo": subcat_codigo,
+        })
 
     return sorted(grupos, key=lambda x: -x["total_bs"])
 
@@ -243,12 +278,37 @@ try:
 except Exception:
     guardado = None
 
-_inicializar_estado(periodo_db, egresos, guardado)
+# Inicialización idempotente de categorías del condominio
+if not st.session_state.get(f"_cats_init_{condominio_id}"):
+    repo_cat.inicializar_subcategorias_condominio(condominio_id)
+    st.session_state[f"_cats_init_{condominio_id}"] = True
+
+# Cargar datos de categorías para sugerencias (una sola vez por sesión/período)
+@st.cache_data(ttl=300, show_spinner=False)
+def _cargar_cats(cid: int):
+    try:
+        sc = repo_cat.listar_subcategorias(cid)
+        pk = repo_cat.listar_palabras_clave(cid)
+        return sc, pk
+    except Exception:
+        return [], []
+
+_subcats_all, _palabras_all = _cargar_cats(condominio_id)
+
+# Mapa código → label display: "Categoría › Subcategoría"
+_subcat_opts: dict[str, str] = {}
+for _s in _subcats_all:
+    _ci = _s.get("categorias_gasto") or {}
+    _subcat_opts[_s["codigo"]] = f"{_ci.get('nombre', '—')} › {_s['nombre']}"
+
+_inicializar_estado(periodo_db, egresos, guardado, _subcats_all, _palabras_all)
 
 sk_asig = _sk("asig", periodo_db)
 sk_dest = _sk("dest", periodo_db)
+sk_cat  = _sk("cat",  periodo_db)
 asig_state: dict[int, str]       = st.session_state[sk_asig]
 dest_state: dict[str, dict]      = st.session_state[sk_dest]
+cat_state:  dict[str, str]       = st.session_state.setdefault(sk_cat, {})
 
 st.markdown("---")
 
@@ -274,10 +334,19 @@ with col_btn:
         sugeridos = sugerir_grupos(descs)
         for e in egresos:
             asig_state[e["id"]] = sugeridos.get(e.get("descripcion") or "", e.get("descripcion") or "")
-        # Reiniciar destinos para nuevos grupos
+        # Reiniciar destinos y categorías para nuevos grupos
         for g in set(asig_state.values()):
             if g not in dest_state:
                 dest_state[g] = {"recibo": True, "balance": True}
+            if g not in cat_state:
+                descs_g = " ".join(
+                    e.get("descripcion") or "" for e in egresos
+                    if asig_state.get(e["id"]) == g
+                )
+                sug = repo_cat.sugerir_subcategoria(
+                    0, descs_g, subcats=_subcats_all, palabras=_palabras_all
+                )
+                cat_state[g] = sug["subcategoria_codigo"] if sug else "OTROS_SIN_CLASIFICAR"
         st.rerun()
 
 # Tabla editable (ítems raw)
@@ -317,14 +386,23 @@ edited_df = st.data_editor(
 for _, row in edited_df.iterrows():
     asig_state[int(row["ID"])] = str(row["Grupo"] or "—").strip()
 
-# Sincronizar dest_state: añadir nuevos grupos, mantener flags de los existentes
+# Sincronizar dest_state y cat_state: añadir nuevos grupos, mantener flags
 grupos_nuevos = set(asig_state.values())
 for gn in grupos_nuevos:
     if gn not in dest_state:
         dest_state[gn] = {"recibo": True, "balance": True}
+    if gn not in cat_state:
+        descs_g = " ".join(
+            e.get("descripcion") or "" for e in egresos
+            if asig_state.get(e["id"]) == gn
+        )
+        sug = repo_cat.sugerir_subcategoria(
+            0, descs_g, subcats=_subcats_all, palabras=_palabras_all
+        )
+        cat_state[gn] = sug["subcategoria_codigo"] if sug else "OTROS_SIN_CLASIFICAR"
 
 # Grupos consolidados (preview)
-grupos_consolidados = _calcular_grupos(egresos, asig_state, dest_state)
+grupos_consolidados = _calcular_grupos(egresos, asig_state, dest_state, cat_state)
 
 with st.expander("👁️ Vista previa de grupos consolidados", expanded=False):
     df_grupos = pd.DataFrame([
@@ -377,21 +455,31 @@ st.info(
 
 df_dest = pd.DataFrame([
     {
-        "Grupo": g["nombre"],
-        "Total Bs.": round(g["total_bs"],  2),
-        "Total USD": round(g["total_usd"], 2),
+        "Grupo":      g["nombre"],
+        "Categoría":  cat_state.get(g["nombre"], "OTROS_SIN_CLASIFICAR"),
+        "Total Bs.":  round(g["total_bs"],  2),
+        "Total USD":  round(g["total_usd"], 2),
         "📄 Recibo":  dest_state.get(g["nombre"], {}).get("recibo",  True),
         "📊 Balance": dest_state.get(g["nombre"], {}).get("balance", True),
     }
     for g in grupos_consolidados
 ])
 
+# Opciones para el selector de subcategoría
+_subcat_codigos  = list(_subcat_opts.keys())
+_subcat_displays = list(_subcat_opts.values())
+
 edited_dest = st.data_editor(
     df_dest,
     column_config={
         "Grupo":       st.column_config.TextColumn(disabled=True, width="large"),
-        "Total Bs.":   st.column_config.NumberColumn(disabled=True, format="%.2f"),
-        "Total USD":   st.column_config.NumberColumn(disabled=True, format="%.2f"),
+        "Categoría":   st.column_config.SelectboxColumn(
+            options=_subcat_codigos,
+            help="Subcategoría del gasto. El sistema pre-rellena con su sugerencia automática.",
+            width="medium",
+        ),
+        "Total Bs.":   st.column_config.NumberColumn(disabled=True, format="%.2f", width="small"),
+        "Total USD":   st.column_config.NumberColumn(disabled=True, format="%.2f", width="small"),
         "📄 Recibo":   st.column_config.CheckboxColumn(
             default=True,
             help="¿Este concepto aparece en el recibo del propietario?",
@@ -407,13 +495,14 @@ edited_dest = st.data_editor(
     key=f"editor_dest_{periodo_db}",
 )
 
-# Actualizar dest_state con ediciones
+# Actualizar dest_state y cat_state con ediciones
 for _, row in edited_dest.iterrows():
     nombre = str(row["Grupo"])
     dest_state[nombre] = {
         "recibo":  bool(row["📄 Recibo"]),
         "balance": bool(row["📊 Balance"]),
     }
+    cat_state[nombre] = str(row.get("Categoría") or "OTROS_SIN_CLASIFICAR")
 
 # Resumen visual de destinos
 col_r, col_b, col_a, col_n = st.columns(4)
@@ -440,7 +529,7 @@ st.markdown("---")
 col_save, col_estado = st.columns([2, 5])
 with col_save:
     if st.button("💾 Guardar agrupaciones", type="primary", use_container_width=True):
-        grupos_para_db = _calcular_grupos(egresos, asig_state, dest_state)
+        grupos_para_db = _calcular_grupos(egresos, asig_state, dest_state, cat_state)
         try:
             repo_agr.upsert(condominio_id, periodo_db, grupos_para_db)
             st.success("✅ Agrupaciones guardadas.")
@@ -457,7 +546,7 @@ with col_estado:
 st.markdown("---")
 
 # Grupos actualizados con destinos para las previsualizaciones
-grupos_final    = _calcular_grupos(egresos, asig_state, dest_state)
+grupos_final    = _calcular_grupos(egresos, asig_state, dest_state, cat_state)
 grupos_recibo   = [g for g in grupos_final if dest_state.get(g["nombre"], {}).get("recibo",  True)]
 grupos_balance  = [g for g in grupos_final if dest_state.get(g["nombre"], {}).get("balance", True)]
 
