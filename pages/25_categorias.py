@@ -40,6 +40,13 @@ st.caption(
     "Configura las subcategorías y palabras clave que el sistema usa para "
     "clasificar automáticamente cada gasto en Redistribución de Gastos."
 )
+st.info(
+    "**Tres secciones en esta página (desplázate hacia arriba si solo ves 2 y 3):** "
+    "**Sección 1** — lista de subcategorías por categoría padre · "
+    "**Sección 2** — palabras clave · "
+    "**Sección 3** — prueba de clasificación (el resultado aparece al escribir en el campo).",
+    icon="ℹ️",
+)
 
 # ── Cargar datos ───────────────────────────────────────────────────────────────
 try:
@@ -214,7 +221,12 @@ texto_prueba = st.text_input(
     key="prueba_clasif",
 )
 
-if texto_prueba.strip():
+if not texto_prueba.strip():
+    st.caption(
+        "👆 Escribe arriba una descripción de gasto; aquí aparecerá la **subcategoría sugerida**, "
+        "el **código** y la **confianza** del clasificador."
+    )
+else:
     with st.spinner("Clasificando…"):
         sugerencia = repo.sugerir_subcategoria(
             condominio_id, texto_prueba, subcats=subcats, palabras=palabras
