@@ -344,27 +344,27 @@ def preparar_datos_recibo(
         ),
     )
 
-    # Columna "Mes"    = total del EDIFICIO en USD para ese concepto.
-    # Acum.1 = round(total_usd × alícuota, 2)  → parte de esta unidad
-    # Mes    = round(Acum.1 / alícuota, 2)      → back-calculado desde el valor ya redondeado
-    # Así la verificación Acum.1 / alícuota = Mes cierra exactamente en 2 decimales.
+    # Columna "Mes" = total del EDIFICIO (misma cifra que Redistribución / agrupación).
+    # Parte unidad = round(total × alícuota, 2). Antes se back-calculaba Mes desde la parte
+    # redondeada y el total del edificio se distorsionaba (ej. 7,68 → 6,67).
     items = []
     for lg in lineas_gasto:
-        usd_unit = round(float(lg.get("total_usd", 0)) * alicuota, 2)
-        mes_usd  = round(usd_unit / alicuota, 2) if alicuota > 0 else round(float(lg.get("total_usd", 0)), 2)
+        tu = float(lg.get("total_usd", 0))
+        mes_usd = round(tu, 2)
+        usd_unit = round(tu * alicuota, 2)
         items.append({
             "conc": lg.get("nombre") or "Sin descripción",
-            "bs":   mes_usd,   # "Mes"    → back-calc desde Acum.1 redondeado
-            "usd":  usd_unit,  # "Acum.1" → parte unidad USD (redondeado)
+            "bs":   mes_usd,   # "Mes" USD edificio
+            "usd":  usd_unit,  # parte unidad USD
         })
 
-    # Totales con la misma lógica
+    # Totales: edificio = suma fuente; unidad = proporción redondeada
     tc_usd = round(total_gastos_usd * alicuota, 2)
     fr_usd = round(fondo_reserva_usd * alicuota, 2)
-    tc_mes = round(tc_usd / alicuota, 2) if alicuota > 0 else round(total_gastos_usd, 2)
-    fr_mes = round(fr_usd / alicuota, 2) if alicuota > 0 else round(fondo_reserva_usd, 2)
+    tc_mes = round(total_gastos_usd, 2)
+    fr_mes = round(fondo_reserva_usd, 2)
     tr_usd = round(total_relacionado_usd * alicuota, 2)
-    tr_mes = round(tr_usd / alicuota, 2) if alicuota > 0 else round(total_relacionado_usd, 2)
+    tr_mes = round(total_relacionado_usd, 2)
 
     totals = [
         {"lbl": f"TOTAL GASTOS COMUNES {mes_nombre}",

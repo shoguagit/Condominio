@@ -463,10 +463,10 @@ def render_recibo(unidad: dict) -> None:
     else:
         data = []
         for l in lineas:
+            mes_usd   = round(l["total_usd"], 2)
             parte_usd = round(l["total_usd"] * alicuota, 2)
-            mes_usd   = round(parte_usd / alicuota, 2) if alicuota > 0 else round(l["total_usd"], 2)
-            parte_bs  = round(l["total_bs"]  * alicuota, 2)
-            mes_bs    = round(parte_bs  / alicuota, 2) if alicuota > 0 else round(l["total_bs"],  2)
+            mes_bs    = round(l["total_bs"], 2)
+            parte_bs  = round(l["total_bs"] * alicuota, 2)
             tasa_str  = f"{l['tasa']:,.2f}" if l["tasa"] > 0 else "—"
             data.append({
                 "CONCEPTO DE GASTOS": l["nombre"],
@@ -493,12 +493,12 @@ def render_recibo(unidad: dict) -> None:
     # ── Totales ───────────────────────────────────────────────────
     tc_usd = round(total_gastos_usd * alicuota, 2)
     tc_bs  = round(total_gastos_bs  * alicuota, 2)
-    tc_mes_usd = round(tc_usd / alicuota, 2) if alicuota > 0 else round(total_gastos_usd, 2)
-    tc_mes_bs  = round(tc_bs  / alicuota, 2) if alicuota > 0 else round(total_gastos_bs,  2)
+    tc_mes_usd = round(total_gastos_usd, 2)
+    tc_mes_bs  = round(total_gastos_bs, 2)
     fr_usd = round(fondo_reserva_usd * alicuota, 2)
     fr_bs  = round(fondo_reserva_bs  * alicuota, 2)
-    fr_mes_usd = round(fr_usd / alicuota, 2) if alicuota > 0 else round(fondo_reserva_usd, 2)
-    fr_mes_bs  = round(fr_bs  / alicuota, 2) if alicuota > 0 else round(fondo_reserva_bs,  2)
+    fr_mes_usd = round(fondo_reserva_usd, 2)
+    fr_mes_bs  = round(fondo_reserva_bs, 2)
 
     st.markdown(
         f"""
