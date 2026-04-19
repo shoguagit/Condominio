@@ -343,6 +343,10 @@ with col_btn:
                 cat_state[g] = sug["subcategoria_codigo"] if sug else "OTROS_SIN_CLASIFICAR"
         st.rerun()
 
+st.caption(
+    "Edita la columna **Grupo**; justo **debajo de la tabla** verás ítems totales, grupos distintos y la diferencia (ítems − grupos)."
+)
+
 # Tabla editable (ítems raw)
 df_raw = pd.DataFrame([
     {
@@ -389,10 +393,27 @@ _n_items_now  = len(egresos)
 _n_grupos_now = len({str(asig_state.get(int(m["id"]), "—")).strip() for m in egresos})
 _n_diff_now   = _n_items_now - _n_grupos_now
 
-st.caption(
-    f"{_n_items_now} ítems → **{_n_grupos_now} grupos** distintos "
-    f"(**{_n_diff_now} ítems** comparten grupo con otro; "
-    f"no hay movimientos faltantes). Edita **Grupo** para renombrar o separar."
+st.markdown("##### Resumen de consolidación (Paso 1)")
+_m1, _m2, _m3 = st.columns(3)
+_m1.metric(
+    "Ítems en el período",
+    _n_items_now,
+    help="Total de egresos cargados para este período.",
+)
+_m2.metric(
+    "Grupos distintos",
+    _n_grupos_now,
+    help="Valores únicos en la columna Grupo (tras tu edición).",
+)
+_m3.metric(
+    "Diferencia (ítems − grupos)",
+    _n_diff_now,
+    help="Cuántos ítems “sobran” porque comparten el mismo texto de Grupo con otro. "
+    "Si separas más grupos, este número baja.",
+)
+st.info(
+    f"**Fórmula:** {_n_items_now} ítems − {_n_grupos_now} grupos = **{_n_diff_now}** "
+    "(filas adicionales por consolidación; no faltan movimientos en la base)."
 )
 
 # Sincronizar dest_state y cat_state: añadir nuevos grupos, mantener flags
