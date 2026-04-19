@@ -358,10 +358,11 @@ with col_btn:
         st.rerun()
 
 st.caption(
-    "Edita la columna **Grupo**; justo **debajo de la tabla** verás ítems totales, grupos distintos y la diferencia (ítems − grupos)."
+    "Edita la columna **Grupo**. La tabla va en un recuadro con scroll; **justo debajo** verás "
+    "**ítems**, **grupos distintos** y la **diferencia** (ítems − grupos), actualizados al editar."
 )
 
-# Tabla editable (ítems raw)
+# Tabla editable (ítems raw) — contenedor con altura para no perder el resumen al hacer scroll de página
 df_raw = pd.DataFrame([
     {
         "ID": m["id"],
@@ -373,23 +374,24 @@ df_raw = pd.DataFrame([
     for m in egresos
 ])
 
-edited_df = st.data_editor(
-    df_raw,
-    column_config={
-        "ID":                    st.column_config.NumberColumn(disabled=True, width="small"),
-        "Descripción original":  st.column_config.TextColumn(disabled=True, width="large"),
-        "Bs.":                   st.column_config.NumberColumn(disabled=True, format="%.2f", width="small"),
-        "USD":                   st.column_config.NumberColumn(disabled=True, format="%.2f", width="small"),
-        "Grupo":                 st.column_config.TextColumn(
-            width="large",
-            help="Escribe el nombre del grupo consolidado. Ítems con el mismo nombre se suman.",
-        ),
-    },
-    hide_index=True,
-    use_container_width=True,
-    num_rows="fixed",
-    key=f"editor_raw_{periodo_db}",
-)
+with st.container(height=480, border=True):
+    edited_df = st.data_editor(
+        df_raw,
+        column_config={
+            "ID":                    st.column_config.NumberColumn(disabled=True, width="small"),
+            "Descripción original":  st.column_config.TextColumn(disabled=True, width="large"),
+            "Bs.":                   st.column_config.NumberColumn(disabled=True, format="%.2f", width="small"),
+            "USD":                   st.column_config.NumberColumn(disabled=True, format="%.2f", width="small"),
+            "Grupo":                 st.column_config.TextColumn(
+                width="large",
+                help="Escribe el nombre del grupo consolidado. Ítems con el mismo nombre se suman.",
+            ),
+        },
+        hide_index=True,
+        use_container_width=True,
+        num_rows="fixed",
+        key=f"editor_raw_{periodo_db}",
+    )
 
 # Actualizar asig_state con lo que editó el usuario
 for _, row in edited_df.iterrows():
