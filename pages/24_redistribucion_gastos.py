@@ -129,6 +129,11 @@ def _sk(key: str, periodo: str) -> str:
     return f"_agr_{key}_{periodo}"
 
 
+def _mov_id(m: dict) -> int:
+    """ID estable para dicts de movimiento (Supabase puede devolver int o str)."""
+    return int(m["id"])
+
+
 def _inicializar_estado(
     periodo: str,
     egresos: list[dict],
@@ -164,8 +169,10 @@ def _inicializar_estado(
         # Auto-sugerir agrupaciones y categorías
         descs     = [m.get("descripcion") or "" for m in egresos]
         sugeridos = sugerir_grupos(descs)
-        asig = {m["id"]: sugeridos.get(m.get("descripcion") or "", m.get("descripcion") or "")
-                for m in egresos}
+        asig = {
+            _mov_id(m): sugeridos.get(m.get("descripcion") or "", m.get("descripcion") or "")
+            for m in egresos
+        }
         dest = {g: {"recibo": True, "balance": True} for g in set(asig.values())}
 
         # Sugerir categoría para cada grupo usando sus descripciones originales
@@ -174,7 +181,7 @@ def _inicializar_estado(
             # Concatenar todas las descripciones de este grupo para mejor contexto
             descs_grupo = " ".join(
                 m.get("descripcion") or "" for m in egresos
-                if asig.get(m["id"]) == grupo_nombre
+                if asig.get(_mov_id(m)) == grupo_nombre
             )
             sug = repo_cat.sugerir_subcategoria(
                 0, descs_grupo, subcats=subcats, palabras=palabras
@@ -192,10 +199,13 @@ def _calcular_grupos(
     """Consolida egresos por grupo y adjunta flags de destino y subcategoría."""
     acc: dict[str, dict] = {}
     for m in egresos:
-        nombre = asig.get(m["id"], m.get("descripcion") or "—")
+        mid = _mov_id(m)
+        # Siempre int: asig usa claves int; si el id llega str desde la API, .get(m["id"]) fallaba
+        # y cada fila se agrupaba por descripción cruda en vez del Grupo editado.
+        nombre = str(asig.get(mid, m.get("descripcion") or "—")).strip()
         if nombre not in acc:
             acc[nombre] = {"nombre": nombre, "movimiento_ids": [], "total_bs": 0.0, "total_usd": 0.0}
-        acc[nombre]["movimiento_ids"].append(m["id"])
+        acc[nombre]["movimiento_ids"].append(mid)
         acc[nombre]["total_bs"]  += float(m.get("monto_bs")  or 0)
         acc[nombre]["total_usd"] += float(m.get("monto_usd") or 0)
 
@@ -306,7 +316,11 @@ _inicializar_estado(periodo_db, egresos, guardado, _subcats_all, _palabras_all)
 sk_asig = _sk("asig", periodo_db)
 sk_dest = _sk("dest", periodo_db)
 sk_cat  = _sk("cat",  periodo_db)
-asig_state: dict[int, str]       = st.session_state[sk_asig]
+asig_state: dict[int, str] = st.session_state[sk_asig]
+# Claves siempre int (Supabase/JSON a veces guardó str en sesiones viejas → lookup fallaba).
+if asig_state and any(not isinstance(k, int) for k in asig_state.keys()):
+    asig_state = {int(k): v for k, v in asig_state.items()}
+    st.session_state[sk_asig] = asig_state
 dest_state: dict[str, dict]      = st.session_state[sk_dest]
 cat_state:  dict[str, str]       = st.session_state.setdefault(sk_cat, {})
 
@@ -327,7 +341,7 @@ with col_btn:
         descs = [e.get("descripcion") or "" for e in egresos]
         sugeridos = sugerir_grupos(descs)
         for e in egresos:
-            asig_state[e["id"]] = sugeridos.get(e.get("descripcion") or "", e.get("descripcion") or "")
+            asig_state[_mov_id(e)] = sugeridos.get(e.get("descripcion") or "", e.get("descripcion") or "")
         # Reiniciar destinos y categorías para nuevos grupos
         for g in set(asig_state.values()):
             if g not in dest_state:
@@ -335,7 +349,7 @@ with col_btn:
             if g not in cat_state:
                 descs_g = " ".join(
                     e.get("descripcion") or "" for e in egresos
-                    if asig_state.get(e["id"]) == g
+                    if asig_state.get(_mov_id(e)) == g
                 )
                 sug = repo_cat.sugerir_subcategoria(
                     0, descs_g, subcats=_subcats_all, palabras=_palabras_all
@@ -354,7 +368,7 @@ df_raw = pd.DataFrame([
         "Descripción original": m.get("descripcion") or "—",
         "Bs.":  round(float(m.get("monto_bs")  or 0), 2),
         "USD":  round(float(m.get("monto_usd") or 0), 2),
-        "Grupo": asig_state.get(m["id"], m.get("descripcion") or "—"),
+        "Grupo": asig_state.get(_mov_id(m), m.get("descripcion") or "—"),
     }
     for m in egresos
 ])
@@ -390,7 +404,7 @@ for _kid in list(asig_state.keys()):
 
 # Conteo solo con IDs del período actual
 _n_items_now  = len(egresos)
-_n_grupos_now = len({str(asig_state.get(int(m["id"]), "—")).strip() for m in egresos})
+_n_grupos_now = len({str(asig_state.get(_mov_id(m), "—")).strip() for m in egresos})
 _n_diff_now   = _n_items_now - _n_grupos_now
 
 st.markdown("##### Resumen de consolidación (Paso 1)")
@@ -424,7 +438,7 @@ for gn in grupos_nuevos:
     if gn not in cat_state:
         descs_g = " ".join(
             e.get("descripcion") or "" for e in egresos
-            if asig_state.get(e["id"]) == gn
+            if asig_state.get(_mov_id(e)) == gn
         )
         sug = repo_cat.sugerir_subcategoria(
             0, descs_g, subcats=_subcats_all, palabras=_palabras_all
@@ -438,7 +452,7 @@ grupos_consolidados = _calcular_grupos(egresos, asig_state, dest_state, cat_stat
 # todos menos el primero (orden por ID) — son las filas “adicionales” por consolidación.
 _por_grupo: dict[str, list[dict]] = {}
 for _m in sorted(egresos, key=lambda x: int(x.get("id") or 0)):
-    _gn = str(asig_state.get(_m["id"], "—")).strip()
+    _gn = str(asig_state.get(_mov_id(_m), "—")).strip()
     _por_grupo.setdefault(_gn, []).append(_m)
 
 _filas_diff: list[dict] = []
@@ -449,7 +463,7 @@ for _rows in _por_grupo.values():
         _filas_diff.append({
             "ID":          int(_r["id"]),
             "Descripción": (str(_r.get("descripcion") or ""))[:220],
-            "Grupo":       str(asig_state.get(_r["id"], "—")).strip(),
+            "Grupo":       str(asig_state.get(_mov_id(_r), "—")).strip(),
             "Bs.":         round(float(_r.get("monto_bs") or 0), 2),
             "USD":         round(float(_r.get("monto_usd") or 0), 2),
         })
@@ -512,6 +526,26 @@ with st.expander("👁️ Vista previa de grupos consolidados", expanded=False):
     st.markdown(
         f"**Total período:** Bs. {total_bs:,.2f}  |  USD {total_usd:,.2f}"
     )
+    with st.expander("🔎 Desglose: cada movimiento → grupo (busca un ID)", expanded=False):
+        st.caption(
+            "Una fila por egreso. Si un ID no aparece o el **Grupo asignado** no coincide con la tabla de arriba, "
+            "recarga la página tras este cambio."
+        )
+        _desglose = [
+            {
+                "ID":            _mov_id(_m),
+                "Grupo asignado": str(asig_state.get(_mov_id(_m), "—"))[:200],
+                "Descripción":   (str(_m.get("descripcion") or ""))[:80],
+                "USD":           round(float(_m.get("monto_usd") or 0), 2),
+            }
+            for _m in sorted(egresos, key=lambda x: _mov_id(x))
+        ]
+        st.dataframe(
+            pd.DataFrame(_desglose),
+            use_container_width=True,
+            hide_index=True,
+            height=min(420, 28 * (len(_desglose) + 1)),
+        )
 
 
 st.markdown("---")
