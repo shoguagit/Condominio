@@ -377,9 +377,16 @@ edited_df = st.data_editor(
 for _, row in edited_df.iterrows():
     asig_state[int(row["ID"])] = str(row["Grupo"] or "—").strip()
 
-# Conteo coherente con la tabla (después del editor — mismo dato que la lista de 15)
+# Quitar asignaciones de movimientos que ya no están en este período (evita grupos
+# fantasma y listas largas inconsistentes con 119−104).
+_ids_periodo = {int(m["id"]) for m in egresos}
+for _kid in list(asig_state.keys()):
+    if int(_kid) not in _ids_periodo:
+        del asig_state[_kid]
+
+# Conteo solo con IDs del período actual
 _n_items_now  = len(egresos)
-_n_grupos_now = len(set(asig_state.values()))
+_n_grupos_now = len({str(asig_state.get(int(m["id"]), "—")).strip() for m in egresos})
 _n_diff_now   = _n_items_now - _n_grupos_now
 
 st.caption(
@@ -426,15 +433,24 @@ for _rows in _por_grupo.values():
             "USD":         round(float(_r.get("monto_usd") or 0), 2),
         })
 
+_filas_diff.sort(key=lambda x: x["ID"])
+_len_diff = len(_filas_diff)
+
 with st.expander(
-    f"📋 Solo estos {_n_diff_now} ítems (los que “sobran” al consolidar) — busca el **ID** en la tabla de arriba",
+    f"📋 Ítems “extra” por consolidar ({_n_diff_now} filas) — busca el **ID** arriba",
     expanded=bool(_filas_diff),
 ):
     st.caption(
-        f"**No faltan movimientos:** los {_n_diff_now} ítems de abajo son los que **repiten** nombre de "
-        "grupo con otro. En cada grupo solo mostramos aquí los que no son el **primer ID** (orden numérico). "
-        "Si quieres **119 líneas distintas** en el recibo, pon un **Grupo** distinto a cada uno."
+        "**No faltan movimientos en la base:** aquí solo aparecen los que comparten **Grupo** con otro. "
+        "Por cada grupo se omite el **ID numérico más bajo**; el resto se lista aquí. "
+        "El número de filas **coincide siempre** con (ítems − grupos distintos)."
     )
+    if _len_diff != _n_diff_now:
+        st.error(
+            f"Inconsistencia interna: lista tiene {_len_diff} filas pero la diferencia es {_n_diff_now}. "
+            "Recarga la página; si persiste, avisa al soporte."
+        )
+    st.caption(f"**Filas en esta lista:** {_len_diff} (esperado: {_n_diff_now})")
     if _filas_diff:
         st.dataframe(
             pd.DataFrame(_filas_diff),
