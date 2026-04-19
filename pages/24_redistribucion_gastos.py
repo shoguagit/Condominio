@@ -604,6 +604,25 @@ col_b.metric("📊 Solo/ambos Balance", cnt_b)
 col_a.metric("📄📊 Ambos",           cnt_a)
 col_n.metric("⬜ Ninguno",            cnt_n)
 
+st.caption(
+    "El **TOTAL GASTOS COMUNES** del recibo solo suma grupos con **📄 Recibo** activado. "
+    "Si comparas con un informe del administrador que incluye todo el mes, marca Recibo en esos grupos "
+    "o usa el botón siguiente y luego **Guardar agrupaciones**."
+)
+if st.button(
+    "✅ Marcar 📄 Recibo en todos los grupos",
+    help="Activa Recibo para cada fila. No cambia Balance ni categorías. Útil para cuadrar el total con todos los egresos.",
+    key=f"recibo_todos_{periodo_db}",
+):
+    for g in grupos_consolidados:
+        nm = g["nombre"]
+        prev = dest_state.get(nm, {"recibo": True, "balance": True})
+        dest_state[nm] = {
+            "recibo": True,
+            "balance": bool(prev.get("balance", True)),
+        }
+    st.rerun()
+
 st.markdown("---")
 
 

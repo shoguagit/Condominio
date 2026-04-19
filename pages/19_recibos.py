@@ -147,11 +147,30 @@ except Exception:
 
 usando_agrupaciones = bool(agrupaciones_guardadas)
 
+# Totales por grupo recalculados desde egresos actuales (los JSON guardados pueden
+# quedar desfasados si se editaron montos después de Guardar).
+agrupaciones_para_recibo: list[dict] | None = None
+if usando_agrupaciones and agrupaciones_guardadas:
+    _mov_por_id = {int(m["id"]): m for m in egresos}
+    agrupaciones_para_recibo = []
+    for _g in agrupaciones_guardadas:
+        _g2 = dict(_g)
+        _tb = _tu = 0.0
+        for _mid in _g.get("movimiento_ids") or []:
+            _mv = _mov_por_id.get(int(_mid))
+            if _mv:
+                _tb += _monto_bs_movimiento(_mv)
+                _tu += _monto_usd_movimiento(_mv)
+        _g2["total_bs"] = round(_tb, 2)
+        _g2["total_usd"] = round(_tu, 2)
+        agrupaciones_para_recibo.append(_g2)
+
 if usando_agrupaciones:
     _banner_placeholder.success(
         f"✅ Usando **{len(agrupaciones_guardadas)} grupos consolidados** "
         f"de Redistribución de Gastos para el período {mes_nombre} {anio}. "
-        "Solo aparecen los grupos marcados como **📄 Recibo**."
+        "Solo aparecen los grupos marcados como **📄 Recibo**. "
+        "Los montos se **recalculan** desde los egresos actuales."
     )
 else:
     _banner_placeholder.info(
@@ -160,8 +179,12 @@ else:
         "usa el módulo **🔄 Redistribución de Gastos**."
     )
 
-if usando_agrupaciones:
-    # Usar solo grupos marcados para Recibo
+def _grupo_tiene_monto(g: dict) -> bool:
+    return (float(g.get("total_bs", 0) or 0) != 0) or (float(g.get("total_usd", 0) or 0) != 0)
+
+
+if usando_agrupaciones and agrupaciones_para_recibo is not None:
+    # Solo grupos con 📄 Recibo y monto distinto de cero (Bs o USD)
     lineas = [
         {
             "nombre":    g["nombre"],
@@ -169,10 +192,12 @@ if usando_agrupaciones:
             "total_usd": float(g.get("total_usd", 0) or 0),
             "tasa":      0.0,
         }
-        for g in agrupaciones_guardadas
-        if g.get("recibo", True) and float(g.get("total_bs", 0) or 0) != 0
+        for g in agrupaciones_para_recibo
+        if g.get("recibo", True) and _grupo_tiene_monto(g)
     ]
     lineas.sort(key=lambda x: (-x["total_bs"], x["nombre"]))
+elif usando_agrupaciones:
+    lineas = []
 else:
     # Construir líneas del recibo desde los movimientos crudos:
     # - Si tiene concepto_id → agrupar por concepto
@@ -203,7 +228,7 @@ else:
             lineas_dict[key]["tasa"] = 0.0
 
     lineas = sorted(lineas_dict.values(), key=lambda x: (-x["total_bs"], x["nombre"]))
-    lineas = [l for l in lineas if l["total_bs"] != 0]
+    lineas = [l for l in lineas if l["total_bs"] != 0 or l["total_usd"] != 0]
 
 total_gastos_bs  = round(sum(l["total_bs"]  for l in lineas), 2)
 total_gastos_usd = round(sum(l["total_usd"] for l in lineas), 2)
@@ -222,9 +247,9 @@ _gap_usd_vs_recibo = round(_sum_usd_todos_mov - total_gastos_usd, 2)
 _aud_fuera_recibo: list[dict] = []
 _aud_ids_guardado: set[int] = set()
 _sum_usd_grupos_json: float | None = None
-if usando_agrupaciones and agrupaciones_guardadas:
+if usando_agrupaciones and agrupaciones_para_recibo:
     _su_g = 0.0
-    for g in agrupaciones_guardadas:
+    for g in agrupaciones_para_recibo:
         _su_g += float(g.get("total_usd", 0) or 0)
         for mid in g.get("movimiento_ids") or []:
             _aud_ids_guardado.add(int(mid))
@@ -257,7 +282,7 @@ _ac2.metric(
 _ac3.metric(
     "Suma USD en TOTAL GASTOS COMUNES",
     total_gastos_usd,
-    help="Lo que usa el recibo: con agrupación, solo grupos con 📄 Recibo y monto Bs ≠ 0.",
+    help="Suma de grupos con 📄 Recibo activo. Montos recalculados desde egresos.",
 )
 _ac4.metric(
     "USD no en el recibo (gap)",
@@ -307,9 +332,9 @@ if usando_agrupaciones and agrupaciones_guardadas:
         and abs(_sum_usd_grupos_json - _sum_usd_todos_mov) > 0.05
     ):
         st.warning(
-            f"La suma USD de los **grupos guardados** (USD {_sum_usd_grupos_json:,.2f}) no coincide con la "
+            f"La suma USD de los **grupos** (USD {_sum_usd_grupos_json:,.2f}, recalculada) no coincide con la "
             f"suma de **egresos actuales** (USD {_sum_usd_todos_mov:,.2f}). "
-            "Suele pasar si se editaron gastos después de guardar: **Guardar agrupaciones** de nuevo."
+            "Puede haber movimientos sin asignar a ningún grupo: **Guardar agrupaciones** de nuevo en Redistribución."
         )
 
 st.caption(
