@@ -200,6 +200,15 @@ def _tasa_para_conversion(fecha_mov: str | None) -> tuple[float, str | None]:
         pass
     return float(_tasa_g or 0), f_aplicada.isoformat()
 
+
+def _fecha_tc_aplicada(fecha_mov: str | None) -> str:
+    """Fecha sobre la que se aplica la tasa (con tope al cierre del período)."""
+    f_mov = _parse_iso_date(fecha_mov) or _periodo_inicio
+    if f_mov is None:
+        return "—"
+    f_aplicada = min(f_mov, _periodo_cierre) if _periodo_cierre else f_mov
+    return f_aplicada.isoformat()
+
 try:
     egresos_list = repo_mov.get_by_tipo(condominio_id, periodo_db, "egreso")
 except DatabaseError:
@@ -241,12 +250,14 @@ if _edit_gasto_id and not cerrado:
             if not edit_desc.strip():
                 st.error("❌ La descripción es obligatoria.")
             else:
-                _tc_e, _ = _tasa_para_conversion(periodo_db)
+                _fecha_e = str(_eg_edit.get("fecha") or datetime.now().date().isoformat())[:10]
+                _tc_e, _ = _tasa_para_conversion(_fecha_e)
                 _usd_e = round(float(edit_monto) / _tc_e, 2) if _tc_e > 0 else 0.0
                 try:
                     repo_mov.update(
                         int(_edit_gasto_id),
                         {
+                            "fecha": _fecha_e,
                             "descripcion": edit_desc.strip(),
                             "monto_bs": float(edit_monto),
                             "monto_usd": _usd_e,
@@ -288,14 +299,15 @@ if not cerrado and not _edit_gasto_id:
             if not add_desc.strip():
                 st.error("❌ La descripción es obligatoria.")
             else:
-                _tc_a, _ = _tasa_para_conversion(periodo_db)
+                _fecha_a = datetime.now().date().isoformat()
+                _tc_a, _ = _tasa_para_conversion(_fecha_a)
                 _usd_a = round(float(add_monto) / _tc_a, 2) if _tc_a > 0 else 0.0
                 try:
                     repo_mov.create(
                         {
                             "condominio_id": condominio_id,
                             "periodo": periodo_db,
-                            "fecha": periodo_db,
+                            "fecha": _fecha_a,
                             "descripcion": add_desc.strip(),
                             "tipo": "egreso",
                             "monto_bs": float(add_monto),
@@ -352,16 +364,17 @@ if egresos_list:
             st.session_state.pop("_confirmar_del_todos", None)
             st.rerun()
 
-    hc = [3, 1, 1, 1, 1] + ([1, 1] if not cerrado else [])
+    hc = [3, 1, 1, 1, 1, 1] + ([1, 1] if not cerrado else [])
     h_cols = st.columns(hc)
     h_cols[0].markdown("**Concepto**")
     h_cols[1].markdown("**Bs.**")
     h_cols[2].markdown("**USD**")
     h_cols[3].markdown("**Fecha**")
     h_cols[4].markdown("**Tasa**")
+    h_cols[5].markdown("**Fecha TC aplicada**")
     if not cerrado:
-        h_cols[5].markdown("**Editar**")
-        h_cols[6].markdown("**Eliminar**")
+        h_cols[6].markdown("**Editar**")
+        h_cols[7].markdown("**Eliminar**")
     for eg in egresos_list:
         mbs = float(eg.get("monto_bs") or 0)
         mtasa = float(eg.get("tasa_cambio") or 0)
@@ -377,11 +390,12 @@ if egresos_list:
         r_cols[2].write(f"{musd:,.2f}")
         r_cols[3].write(mfecha)
         r_cols[4].write(f"{mtasa:,.2f}" if mtasa > 0 else "—")
+        r_cols[5].write(_fecha_tc_aplicada(mfecha))
         if not cerrado:
-            if r_cols[5].button("✏️", key=f"edit_g_{eg['id']}", help="Editar"):
+            if r_cols[6].button("✏️", key=f"edit_g_{eg['id']}", help="Editar"):
                 st.session_state["_edit_gasto_id"] = eg["id"]
                 st.rerun()
-            if r_cols[6].button("🗑️", key=f"del_g_{eg['id']}", help="Eliminar"):
+            if r_cols[7].button("🗑️", key=f"del_g_{eg['id']}", help="Eliminar"):
                 try:
                     repo_mov.delete(int(eg["id"]))
                     st.session_state["_flash_gasto_del"] = True
