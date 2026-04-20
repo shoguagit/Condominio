@@ -122,6 +122,29 @@ def sugerir_grupos(
     return asignados
 
 
+def sugerir_grupo_operativo(descripcion: str) -> str | None:
+    """
+    Normaliza grupos "operativos" para mayor claridad en recibo/reportes.
+    No reemplaza el algoritmo general; se usa bajo demanda con un botón explícito.
+    """
+    d = (descripcion or "").lower()
+    if "cestaticket" in d or "cesaticket" in d:
+        return "Cestaticket Febrero 2026"
+    if "ayuda transporte social" in d:
+        return "Ayudas al personal para gastos de Transportes"
+    if "nomina" in d:
+        if "sub gerente" in d or "subgerente" in d:
+            return "Nomina Marzo Sub Gerente"
+        if "gerente" in d:
+            return "Nomina Marzo Gerente"
+        if "mantenimiento" in d:
+            return "Nomina Marzo Personal Mantenimiento"
+        if "seguridad" in d or "vigilancia" in d:
+            return "Nomina Marzo Personal Vigilancia"
+        return "Nomina Marzo Otros"
+    return None
+
+
 # ── Helpers de estado ─────────────────────────────────────────────────────────
 
 def _sk(key: str, periodo: str) -> str:
@@ -335,13 +358,33 @@ st.markdown(
     help="Edita la columna **Grupo** para consolidar ítems similares en un solo concepto.",
 )
 
-_, col_btn = st.columns([5, 2])
-with col_btn:
+col_sp, col_btn_auto, col_btn_norm = st.columns([3, 2, 2])
+with col_btn_auto:
     if st.button("🔁 Re-sugerir grupos automáticamente", use_container_width=True):
         descs = [e.get("descripcion") or "" for e in egresos]
         sugeridos = sugerir_grupos(descs)
         for e in egresos:
             asig_state[_mov_id(e)] = sugeridos.get(e.get("descripcion") or "", e.get("descripcion") or "")
+        # Reiniciar destinos y categorías para nuevos grupos
+        for g in set(asig_state.values()):
+            if g not in dest_state:
+                dest_state[g] = {"recibo": True, "balance": True}
+            if g not in cat_state:
+                descs_g = " ".join(
+                    e.get("descripcion") or "" for e in egresos
+                    if asig_state.get(_mov_id(e)) == g
+                )
+                sug = repo_cat.sugerir_subcategoria(
+                    0, descs_g, subcats=_subcats_all, palabras=_palabras_all
+                )
+                cat_state[g] = sug["subcategoria_codigo"] if sug else "OTROS_SIN_CLASIFICAR"
+        st.rerun()
+with col_btn_norm:
+    if st.button("🧭 Normalizar grupos clave", use_container_width=True):
+        for e in egresos:
+            _norm = sugerir_grupo_operativo(e.get("descripcion") or "")
+            if _norm:
+                asig_state[_mov_id(e)] = _norm
         # Reiniciar destinos y categorías para nuevos grupos
         for g in set(asig_state.values()):
             if g not in dest_state:
@@ -473,13 +516,126 @@ else:
         f"**{_n_mov_en_grupos}** movimientos. Recarga o revisa datos."
     )
 
-# Ítems que explican (N ítems − N grupos): por cada grupo con varios movimientos,
-# todos menos el primero (orden por ID) — son las filas “adicionales” por consolidación.
+# Índice por grupo para trazabilidad y detalle justificativo
 _por_grupo: dict[str, list[dict]] = {}
 for _m in sorted(egresos, key=lambda x: int(x.get("id") or 0)):
     _gn = str(asig_state.get(_mov_id(_m), "—")).strip()
     _por_grupo.setdefault(_gn, []).append(_m)
 
+st.markdown("##### 🔎 Transparencia y detalle")
+_tab_raw, _tab_map, _tab_group = st.tabs([
+    "1) Egresos crudos",
+    "2) ID → Grupo",
+    "3) Justificación por grupo",
+])
+
+with _tab_raw:
+    _raw_rows = [
+        {
+            "ID": _mov_id(_m),
+            "Descripción original": str(_m.get("descripcion") or "")[:180],
+            "Bs.": round(float(_m.get("monto_bs") or 0), 2),
+            "USD": round(float(_m.get("monto_usd") or 0), 2),
+        }
+        for _m in sorted(egresos, key=lambda x: _mov_id(x))
+    ]
+    st.dataframe(
+        pd.DataFrame(_raw_rows),
+        use_container_width=True,
+        hide_index=True,
+        height=360,
+        column_config={
+            "Bs.": st.column_config.NumberColumn(format="%.2f"),
+            "USD": st.column_config.NumberColumn(format="%.2f"),
+        },
+    )
+
+with _tab_map:
+    _filtro = st.text_input(
+        "Buscar por ID, descripción o grupo",
+        key=f"filtro_map_{periodo_db}",
+        placeholder="Ej: 3119, cestaticket, nomina, corpoelec...",
+    ).strip().lower()
+    _map_rows = [
+        {
+            "ID": _mov_id(_m),
+            "Grupo asignado": str(asig_state.get(_mov_id(_m), "—"))[:200],
+            "Descripción": str(_m.get("descripcion") or "")[:120],
+            "USD": round(float(_m.get("monto_usd") or 0), 2),
+        }
+        for _m in sorted(egresos, key=lambda x: _mov_id(x))
+    ]
+    if _filtro:
+        _map_rows = [
+            _r for _r in _map_rows
+            if _filtro in str(_r["ID"]).lower()
+            or _filtro in _r["Grupo asignado"].lower()
+            or _filtro in _r["Descripción"].lower()
+        ]
+    st.dataframe(
+        pd.DataFrame(_map_rows),
+        use_container_width=True,
+        hide_index=True,
+        height=360,
+        column_config={"USD": st.column_config.NumberColumn(format="%.2f")},
+    )
+
+with _tab_group:
+    _resumen_grupos = pd.DataFrame([
+        {
+            "Grupo": _g["nombre"],
+            "N ítems": len(_g["movimiento_ids"]),
+            "Total Bs.": round(float(_g["total_bs"] or 0), 2),
+            "Total USD": round(float(_g["total_usd"] or 0), 2),
+        }
+        for _g in grupos_consolidados
+    ]).sort_values(by=["Total USD", "N ítems"], ascending=[False, False])
+    st.dataframe(
+        _resumen_grupos,
+        use_container_width=True,
+        hide_index=True,
+        height=240,
+        column_config={
+            "Total Bs.": st.column_config.NumberColumn(format="%.2f"),
+            "Total USD": st.column_config.NumberColumn(format="%.2f"),
+        },
+    )
+    _opts = list(_resumen_grupos["Grupo"]) if not _resumen_grupos.empty else []
+    if _opts:
+        _sel = st.selectbox(
+            "Ver detalle de un grupo",
+            options=_opts,
+            key=f"sel_detalle_grupo_{periodo_db}",
+        )
+        _rows_g = _por_grupo.get(_sel, [])
+        _detalle = [
+            {
+                "ID": _mov_id(_r),
+                "Descripción original": str(_r.get("descripcion") or "")[:180],
+                "Bs.": round(float(_r.get("monto_bs") or 0), 2),
+                "USD": round(float(_r.get("monto_usd") or 0), 2),
+            }
+            for _r in _rows_g
+        ]
+        st.dataframe(
+            pd.DataFrame(_detalle),
+            use_container_width=True,
+            hide_index=True,
+            height=280,
+            column_config={
+                "Bs.": st.column_config.NumberColumn(format="%.2f"),
+                "USD": st.column_config.NumberColumn(format="%.2f"),
+            },
+        )
+        _sum_bs = round(sum(float(_r.get("monto_bs") or 0) for _r in _rows_g), 2)
+        _sum_usd = round(sum(float(_r.get("monto_usd") or 0) for _r in _rows_g), 2)
+        st.info(
+            f"**Suma detalle del grupo:** Bs. {_sum_bs:,.2f} | USD {_sum_usd:,.2f} "
+            f"(N={len(_rows_g)} ítems)."
+        )
+
+# Ítems que explican (N ítems − N grupos): por cada grupo con varios movimientos,
+# todos menos el primero (orden por ID) — son las filas “adicionales” por consolidación.
 _filas_diff: list[dict] = []
 for _rows in _por_grupo.values():
     if len(_rows) <= 1:
@@ -551,26 +707,6 @@ with st.expander("👁️ Vista previa de grupos consolidados", expanded=False):
     st.markdown(
         f"**Total período:** Bs. {total_bs:,.2f}  |  USD {total_usd:,.2f}"
     )
-    with st.expander("🔎 Desglose: cada movimiento → grupo (busca un ID)", expanded=False):
-        st.caption(
-            "Una fila por egreso. Si un ID no aparece o el **Grupo asignado** no coincide con la tabla de arriba, "
-            "recarga la página tras este cambio."
-        )
-        _desglose = [
-            {
-                "ID":            _mov_id(_m),
-                "Grupo asignado": str(asig_state.get(_mov_id(_m), "—"))[:200],
-                "Descripción":   (str(_m.get("descripcion") or ""))[:80],
-                "USD":           round(float(_m.get("monto_usd") or 0), 2),
-            }
-            for _m in sorted(egresos, key=lambda x: _mov_id(x))
-        ]
-        st.dataframe(
-            pd.DataFrame(_desglose),
-            use_container_width=True,
-            hide_index=True,
-            height=min(420, 28 * (len(_desglose) + 1)),
-        )
 
 
 st.markdown("---")

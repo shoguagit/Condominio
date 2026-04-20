@@ -307,6 +307,13 @@ if usando_agrupaciones and _aud_fuera_recibo:
                 "Total Bs.": st.column_config.NumberColumn(format="%.2f"),
             },
         )
+    st.info(
+        "**No falta data** en la base: esos movimientos están cargados y suman en la **primera métrica** "
+        "(todos los egresos). Solo **no entran al PDF del recibo** al propietario porque así lo definiste en "
+        "Redistribución (📄 Recibo desmarcado). Si por política de administración **no podés** marcarlos, "
+        "es **normal** que el total del recibo sea menor que un informe “de todo el mes”; podés seguir "
+        "mostrándolos en **Balance mensual** (📊) si aplica."
+    )
 elif not usando_agrupaciones and abs(_gap_usd_vs_recibo) > 0.02:
     _cero = [m for m in egresos if _monto_bs_movimiento(m) == 0 and _monto_usd_movimiento(m) != 0]
     st.caption(
@@ -338,7 +345,7 @@ if usando_agrupaciones and agrupaciones_guardadas:
         )
 
 st.caption(
-    "**Nota:** En Redistribución, “119 ítems y 60 grupos” solo indica cuántos conceptos consolidaste; "
+    "**Nota:** En Redistribución, la diferencia **ítems − grupos** solo indica cuántos conceptos consolidaste; "
     "**no** significa que falten movimientos. Las **palabras clave** solo ayudan a sugerir categoría, "
     "no filtran egresos del recibo."
 )
