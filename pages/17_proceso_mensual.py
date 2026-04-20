@@ -328,7 +328,7 @@ if egresos_list:
     total_usd_eg = round(total_eg / _tasa_g, 2) if _tasa_g > 0 else 0.0
     usd_label = f" ≈ USD {total_usd_eg:,.2f}" if _tasa_g > 0 else ""
 
-    sum_col, btn_col = st.columns([3, 1])
+    sum_col, btn_col, fix_col = st.columns([3, 1, 2])
     sum_col.markdown(
         f"**{len(egresos_list)} concepto(s) — Total: Bs. {total_eg:,.2f}{usd_label}**"
     )
@@ -342,6 +342,47 @@ if egresos_list:
         ):
             st.session_state["_confirmar_del_todos"] = True
             st.rerun()
+    if not cerrado:
+        # Detección de filas con tasa/USD desalineados respecto a la regla actual.
+        _cache_tc: dict[str, float] = {}
+        _pendientes_fix: list[tuple[int, float, float]] = []
+        for _eg in egresos_list:
+            _fid = int(_eg.get("id"))
+            _fch = str(_eg.get("fecha") or periodo_db)[:10]
+            _mbs = float(_eg.get("monto_bs") or 0)
+            if _fch not in _cache_tc:
+                _tc_tmp, _ = _tasa_para_conversion(_fch)
+                _cache_tc[_fch] = float(_tc_tmp or 0)
+            _tc_new = _cache_tc[_fch]
+            _usd_new = round(_mbs / _tc_new, 2) if _tc_new > 0 else 0.0
+            _tc_old = float(_eg.get("tasa_cambio") or 0)
+            _usd_old = float(_eg.get("monto_usd") or 0)
+            if abs(_tc_new - _tc_old) > 0.0001 or abs(_usd_new - _usd_old) > 0.01:
+                _pendientes_fix.append((_fid, _tc_new, _usd_new))
+        if _pendientes_fix:
+            fix_col.warning(f"⚠️ {len(_pendientes_fix)} gasto(s) con tasa/USD desactualizados.")
+            if fix_col.button(
+                "♻️ Recalcular tasa/USD del período",
+                key="btn_fix_tasa_periodo",
+                use_container_width=True,
+                help="Actualiza todos los egresos de este período con la regla vigente de tasa (incluye tope a cierre).",
+            ):
+                _ok_fix = 0
+                _err_fix = 0
+                for _fid, _tc_new, _usd_new in _pendientes_fix:
+                    try:
+                        repo_mov.update(
+                            _fid,
+                            {"tasa_cambio": _tc_new, "monto_usd": _usd_new},
+                        )
+                        _ok_fix += 1
+                    except DatabaseError:
+                        _err_fix += 1
+                if _ok_fix:
+                    st.success(f"✅ { _ok_fix } gasto(s) recalculados.")
+                if _err_fix:
+                    st.warning(f"⚠️ { _err_fix } gasto(s) no se pudieron actualizar.")
+                st.rerun()
 
     if st.session_state.get("_confirmar_del_todos") and not cerrado:
         st.warning(
