@@ -1,5 +1,5 @@
 import streamlit as st
-from datetime import datetime, timezone
+from datetime import datetime, timezone, date
 from dateutil.relativedelta import relativedelta
 
 from config.supabase_client import get_supabase_client
@@ -18,6 +18,7 @@ from repositories.cobro_extraordinario_repository import CobroExtraordinarioRepo
 from utils.auth import check_authentication, require_condominio
 from utils.error_handler import DatabaseError
 from utils.validators import validate_periodo, periodo_to_date_str, date_periodo_to_mm_yyyy
+from utils.tasa_bcv_resolver import resolver_tasa_para_fecha
 from utils.indiviso_cuota import cuota_bs_desde_presupuesto, valida_suma_exacta_100_pct, TOLERANCIA_INDIVISO_PCT
 from utils.cierre_mensual import (
     saldo_nuevo_tras_cierre,
@@ -66,6 +67,22 @@ ok_db, msg_db, periodo_db = periodo_to_date_str(periodo)
 if not ok_db or not periodo_db:
     st.error(f"❌ {msg_db}")
     st.stop()
+
+
+def _parse_iso_date(s: str | None) -> date | None:
+    try:
+        if not s:
+            return None
+        return datetime.strptime(str(s)[:10], "%Y-%m-%d").date()
+    except Exception:
+        return None
+
+
+_periodo_inicio = _parse_iso_date(periodo_db)
+_periodo_cierre = (
+    (_periodo_inicio + relativedelta(months=1, days=-1))
+    if _periodo_inicio is not None else None
+)
 
 try:
     proceso = repo_proc.get_or_create(condominio_id, periodo_db)
@@ -164,6 +181,25 @@ if _tasa_g <= 0:
     except DatabaseError:
         _tasa_g = 0.0
 
+
+def _tasa_para_conversion(fecha_mov: str | None) -> tuple[float, str | None]:
+    """
+    Devuelve (tasa, fecha_tasa_aplicada).
+    Regla: si fecha_mov > cierre del período, se usa la tasa del cierre del período.
+    """
+    f_mov = _parse_iso_date(fecha_mov) or _periodo_inicio
+    if f_mov is None:
+        return float(_tasa_g or 0), None
+    f_aplicada = min(f_mov, _periodo_cierre) if _periodo_cierre else f_mov
+    try:
+        tc, _ = resolver_tasa_para_fecha(get_supabase_client(), f_aplicada.isoformat())
+        tc_f = float(tc or 0)
+        if tc_f > 0:
+            return tc_f, f_aplicada.isoformat()
+    except Exception:
+        pass
+    return float(_tasa_g or 0), f_aplicada.isoformat()
+
 try:
     egresos_list = repo_mov.get_by_tipo(condominio_id, periodo_db, "egreso")
 except DatabaseError:
@@ -205,7 +241,8 @@ if _edit_gasto_id and not cerrado:
             if not edit_desc.strip():
                 st.error("❌ La descripción es obligatoria.")
             else:
-                _usd_e = round(float(edit_monto) / _tasa_g, 2) if _tasa_g > 0 else 0.0
+                _tc_e, _ = _tasa_para_conversion(periodo_db)
+                _usd_e = round(float(edit_monto) / _tc_e, 2) if _tc_e > 0 else 0.0
                 try:
                     repo_mov.update(
                         int(_edit_gasto_id),
@@ -213,7 +250,7 @@ if _edit_gasto_id and not cerrado:
                             "descripcion": edit_desc.strip(),
                             "monto_bs": float(edit_monto),
                             "monto_usd": _usd_e,
-                            "tasa_cambio": _tasa_g,
+                            "tasa_cambio": _tc_e,
                         },
                     )
                     st.session_state.pop("_edit_gasto_id", None)
@@ -251,7 +288,8 @@ if not cerrado and not _edit_gasto_id:
             if not add_desc.strip():
                 st.error("❌ La descripción es obligatoria.")
             else:
-                _usd_a = round(float(add_monto) / _tasa_g, 2) if _tasa_g > 0 else 0.0
+                _tc_a, _ = _tasa_para_conversion(periodo_db)
+                _usd_a = round(float(add_monto) / _tc_a, 2) if _tc_a > 0 else 0.0
                 try:
                     repo_mov.create(
                         {
@@ -262,7 +300,7 @@ if not cerrado and not _edit_gasto_id:
                             "tipo": "egreso",
                             "monto_bs": float(add_monto),
                             "monto_usd": _usd_a,
-                            "tasa_cambio": _tasa_g,
+                            "tasa_cambio": _tc_a,
                             "fuente": "manual",
                             "estado": "pendiente",
                         }
@@ -314,28 +352,36 @@ if egresos_list:
             st.session_state.pop("_confirmar_del_todos", None)
             st.rerun()
 
-    hc = [3, 1, 1] + ([1, 1] if not cerrado else [])
+    hc = [3, 1, 1, 1, 1] + ([1, 1] if not cerrado else [])
     h_cols = st.columns(hc)
     h_cols[0].markdown("**Concepto**")
     h_cols[1].markdown("**Bs.**")
     h_cols[2].markdown("**USD**")
+    h_cols[3].markdown("**Fecha**")
+    h_cols[4].markdown("**Tasa**")
     if not cerrado:
-        h_cols[3].markdown("**Editar**")
-        h_cols[4].markdown("**Eliminar**")
+        h_cols[5].markdown("**Editar**")
+        h_cols[6].markdown("**Eliminar**")
     for eg in egresos_list:
         mbs = float(eg.get("monto_bs") or 0)
+        mtasa = float(eg.get("tasa_cambio") or 0)
         musd = float(eg.get("monto_usd") or 0) or (
-            round(mbs / _tasa_g, 2) if _tasa_g > 0 else 0.0
+            round(mbs / mtasa, 2) if mtasa > 0 else (
+                round(mbs / _tasa_g, 2) if _tasa_g > 0 else 0.0
+            )
         )
+        mfecha = str(eg.get("fecha") or "—")[:10]
         r_cols = st.columns(hc)
         r_cols[0].write(eg.get("descripcion") or "—")
         r_cols[1].write(f"{mbs:,.2f}")
         r_cols[2].write(f"{musd:,.2f}")
+        r_cols[3].write(mfecha)
+        r_cols[4].write(f"{mtasa:,.2f}" if mtasa > 0 else "—")
         if not cerrado:
-            if r_cols[3].button("✏️", key=f"edit_g_{eg['id']}", help="Editar"):
+            if r_cols[5].button("✏️", key=f"edit_g_{eg['id']}", help="Editar"):
                 st.session_state["_edit_gasto_id"] = eg["id"]
                 st.rerun()
-            if r_cols[4].button("🗑️", key=f"del_g_{eg['id']}", help="Eliminar"):
+            if r_cols[6].button("🗑️", key=f"del_g_{eg['id']}", help="Eliminar"):
                 try:
                     repo_mov.delete(int(eg["id"]))
                     st.session_state["_flash_gasto_del"] = True
@@ -355,7 +401,8 @@ if not cerrado:
         st.caption(
             "Suba el histórico de operaciones del banco. "
             "El sistema detecta automáticamente las columnas de fecha, monto, "
-            "beneficiario y concepto. La tasa BCV se aplica según la **fecha de cada pago**."
+            "beneficiario y concepto. La tasa BCV se aplica según la **fecha de cada pago**; "
+            "si la fecha supera el período trabajado, usa la tasa del **cierre del período**."
         )
 
         if st.session_state.pop("_flash_import_ok", False):
@@ -458,12 +505,16 @@ if not cerrado:
 
                     if filas_prev:
                         # Calcular tasas BCV por fecha única (batch)
-                        from utils.tasa_bcv_resolver import resolver_tasa_para_fecha
                         _bcv_cache: dict[str, float] = {}
                         _client_imp = get_supabase_client()
                         fechas_unicas = {str(f["fecha"]) for f in filas_prev}
                         for fd_str in fechas_unicas:
-                            tasa_fd, _ = resolver_tasa_para_fecha(_client_imp, fd_str)
+                            _f_fd = _parse_iso_date(fd_str) or _periodo_inicio
+                            if _f_fd is None:
+                                _bcv_cache[fd_str] = 0.0
+                                continue
+                            _f_apl = min(_f_fd, _periodo_cierre) if _periodo_cierre else _f_fd
+                            tasa_fd, _ = resolver_tasa_para_fecha(_client_imp, _f_apl.isoformat())
                             _bcv_cache[fd_str] = float(tasa_fd or 0)
 
                         rows_prev_ui = []
@@ -472,6 +523,10 @@ if not cerrado:
                             usd_v = round(f["monto_bs"] / tasa_fd, 2) if tasa_fd > 0 else 0.0
                             rows_prev_ui.append({
                                 "Fecha": str(f["fecha"]),
+                                "Fecha TC": (
+                                    (min(_parse_iso_date(str(f["fecha"])), _periodo_cierre).isoformat())
+                                    if (_parse_iso_date(str(f["fecha"])) and _periodo_cierre) else str(f["fecha"])
+                                )[:10],
                                 "Referencia": f["referencia"],
                                 "Descripción": f["descripcion"],
                                 "Bs.": f"{f['monto_bs']:,.2f}",
@@ -490,7 +545,6 @@ if not cerrado:
                             type="primary",
                             key="btn_imp_confirmar",
                         ):
-                            from utils.tasa_bcv_resolver import resolver_tasa_para_fecha as _rtpf
                             _c2 = get_supabase_client()
                             n_ok = 0
                             n_err = 0

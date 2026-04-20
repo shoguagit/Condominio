@@ -502,9 +502,11 @@ st.caption(
 df_raw = pd.DataFrame([
     {
         "ID": m["id"],
+        "Fecha": str(m.get("fecha") or "")[:10] or "—",
         "Descripción original": m.get("descripcion") or "—",
         "Bs.":  round(float(m.get("monto_bs")  or 0), 2),
         "USD":  round(float(m.get("monto_usd") or 0), 2),
+        "Tasa": round(float(m.get("tasa_cambio") or 0), 4),
         "Grupo": asig_state.get(_mov_id(m), m.get("descripcion") or "—"),
     }
     for m in egresos
@@ -515,9 +517,11 @@ with st.container(height=480, border=True):
         df_raw,
         column_config={
             "ID":                    st.column_config.NumberColumn(disabled=True, width="small"),
+            "Fecha":                 st.column_config.TextColumn(disabled=True, width="small"),
             "Descripción original":  st.column_config.TextColumn(disabled=True, width="large"),
             "Bs.":                   st.column_config.NumberColumn(disabled=True, format="%.2f", width="small"),
             "USD":                   st.column_config.NumberColumn(disabled=True, format="%.2f", width="small"),
+            "Tasa":                  st.column_config.NumberColumn(disabled=True, format="%.4f", width="small"),
             "Grupo":                 st.column_config.TextColumn(
                 width="large",
                 help="Escribe el nombre del grupo consolidado. Ítems con el mismo nombre se suman.",
@@ -626,9 +630,11 @@ with _tab_raw:
     _raw_rows = [
         {
             "ID": _mov_id(_m),
+            "Fecha": str(_m.get("fecha") or "")[:10] or "—",
             "Descripción original": str(_m.get("descripcion") or "")[:180],
             "Bs.": round(float(_m.get("monto_bs") or 0), 2),
             "USD": round(float(_m.get("monto_usd") or 0), 2),
+            "Tasa": round(float(_m.get("tasa_cambio") or 0), 4),
         }
         for _m in sorted(egresos, key=lambda x: _mov_id(x))
     ]
@@ -640,6 +646,7 @@ with _tab_raw:
         column_config={
             "Bs.": st.column_config.NumberColumn(format="%.2f"),
             "USD": st.column_config.NumberColumn(format="%.2f"),
+            "Tasa": st.column_config.NumberColumn(format="%.4f"),
         },
     )
 
@@ -652,6 +659,8 @@ with _tab_map:
     _map_rows = [
         {
             "ID": _mov_id(_m),
+            "Fecha": str(_m.get("fecha") or "")[:10] or "—",
+            "Tasa": round(float(_m.get("tasa_cambio") or 0), 4),
             "Grupo asignado": str(asig_state.get(_mov_id(_m), "—"))[:200],
             "Descripción": str(_m.get("descripcion") or "")[:120],
             "USD": round(float(_m.get("monto_usd") or 0), 2),
@@ -704,9 +713,11 @@ with _tab_group:
         _detalle = [
             {
                 "ID": _mov_id(_r),
+                "Fecha": str(_r.get("fecha") or "")[:10] or "—",
                 "Descripción original": str(_r.get("descripcion") or "")[:180],
                 "Bs.": round(float(_r.get("monto_bs") or 0), 2),
                 "USD": round(float(_r.get("monto_usd") or 0), 2),
+                "Tasa": round(float(_r.get("tasa_cambio") or 0), 4),
             }
             for _r in _rows_g
         ]
@@ -718,6 +729,7 @@ with _tab_group:
             column_config={
                 "Bs.": st.column_config.NumberColumn(format="%.2f"),
                 "USD": st.column_config.NumberColumn(format="%.2f"),
+                "Tasa": st.column_config.NumberColumn(format="%.4f"),
             },
         )
         _sum_bs = round(sum(float(_r.get("monto_bs") or 0) for _r in _rows_g), 2)
@@ -736,10 +748,12 @@ for _rows in _por_grupo.values():
     for _r in _rows[1:]:
         _filas_diff.append({
             "ID":          int(_r["id"]),
+            "Fecha":       str(_r.get("fecha") or "")[:10] or "—",
             "Descripción": (str(_r.get("descripcion") or ""))[:220],
             "Grupo":       str(asig_state.get(_mov_id(_r), "—")).strip(),
             "Bs.":         round(float(_r.get("monto_bs") or 0), 2),
             "USD":         round(float(_r.get("monto_usd") or 0), 2),
+            "Tasa":        round(float(_r.get("tasa_cambio") or 0), 4),
         })
 
 _filas_diff.sort(key=lambda x: x["ID"])
@@ -767,10 +781,12 @@ with st.expander(
             hide_index=True,
             column_config={
                 "ID":          st.column_config.NumberColumn(width="small"),
+                "Fecha":       st.column_config.TextColumn(width="small"),
                 "Descripción": st.column_config.TextColumn(width="large"),
                 "Grupo":       st.column_config.TextColumn(width="large"),
                 "Bs.":         st.column_config.NumberColumn(format="%.2f"),
                 "USD":         st.column_config.NumberColumn(format="%.2f"),
+                "Tasa":        st.column_config.NumberColumn(format="%.4f"),
             },
         )
     else:
