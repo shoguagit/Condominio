@@ -99,6 +99,18 @@ def _periodo_marker(text: str) -> tuple[str | None, str | None]:
     mes = next((m for m in _MESES_NOISE if re.search(rf"\b{m}\b", t)), None)
     m_year = re.search(r"\b(20\d{2})\b", t)
     anio = m_year.group(1) if m_year else None
+    # También soporta formatos tipo 022026, 02-2026, 02/2026.
+    m_num = re.search(r"\b(0[1-9]|1[0-2])(?:[-/ ]?)(20\d{2})\b", t)
+    if m_num:
+        if not anio:
+            anio = m_num.group(2)
+        if not mes:
+            _m_idx = int(m_num.group(1)) - 1
+            _meses = sorted(_MESES_NOISE, key=lambda x: (
+                "enero febrero marzo abril mayo junio julio agosto septiembre octubre noviembre diciembre".split().index(x)
+            ))
+            if 0 <= _m_idx < len(_meses):
+                mes = _meses[_m_idx]
     return mes, anio
 
 
@@ -117,6 +129,40 @@ def _periodo_compatible(a: tuple[str | None, str | None], b: tuple[str | None, s
     return True
 
 
+def _concepto_marker(text: str) -> str | None:
+    """
+    Marca semántica para no mezclar conceptos críticos con rótulos genéricos.
+    Ej: IVSS no debe consolidarse con 'No Indicado Febrero 2026'.
+    """
+    t = (text or "").lower()
+    markers = [
+        ("ivss", "ivss"),
+        ("banavih", "banavih"),
+        ("faov", "banavih"),
+        ("lph", "banavih"),
+        ("corpoelec", "corpoelec"),
+        ("hidrocapital", "hidrocapital"),
+        ("cestaticket", "cestaticket"),
+        ("cesaticket", "cestaticket"),
+        ("nomina", "nomina"),
+        ("ayuda transporte social", "ayuda_transporte"),
+    ]
+    for needle, mark in markers:
+        if needle in t:
+            return mark
+    return None
+
+
+def _concepto_compatible(a: str | None, b: str | None) -> bool:
+    """
+    Si hay marcador en alguno, deben coincidir.
+    Evita que un concepto específico termine en un grupo "genérico".
+    """
+    if a is None and b is None:
+        return True
+    return a == b
+
+
 def sugerir_grupos(
     descripciones: list[str], threshold: float = 0.55
 ) -> dict[str, str]:
@@ -125,6 +171,7 @@ def sugerir_grupos(
     per_map: dict[str, tuple[str | None, str | None]] = {
         d: _periodo_marker(d) for d in descripciones
     }
+    marker_map: dict[str, str | None] = {d: _concepto_marker(d) for d in descripciones}
     grupos: dict[str, list[str]] = {}   # nombre_grupo → [descs]
     asignados: dict[str, str]    = {}   # desc → nombre_grupo
 
@@ -133,14 +180,20 @@ def sugerir_grupos(
             continue
         toks = tok_map[desc]
         per_desc = per_map[desc]
+        marker_desc = marker_map[desc]
         mejor: str | None = None
         mejor_sim: float  = threshold
 
         for nombre_grupo in grupos:
             per_g = per_map.get(nombre_grupo, _periodo_marker(nombre_grupo))
+            marker_g = marker_map.get(nombre_grupo, _concepto_marker(nombre_grupo))
             # No consolidar automáticamente conceptos con mes/año explícitos distintos
             # (ej: "Corpoelec Febrero" vs "Corpoelec Marzo").
             if not _periodo_compatible(per_desc, per_g):
+                continue
+            # No mezclar conceptos específicos con genéricos o de otra naturaleza
+            # (ej: "No Indicado Ivss 022026" en "No Indicado Febrero 2026").
+            if not _concepto_compatible(marker_desc, marker_g):
                 continue
             g_toks = tok_map.get(nombre_grupo, _tokens(nombre_grupo))
             s = _similitud(toks, g_toks)
