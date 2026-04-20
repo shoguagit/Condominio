@@ -185,12 +185,13 @@ if _tasa_g <= 0:
 def _tasa_para_conversion(fecha_mov: str | None) -> tuple[float, str | None]:
     """
     Devuelve (tasa, fecha_tasa_aplicada).
-    Regla: si fecha_mov > cierre del período, se usa la tasa del cierre del período.
+    Regla del Proceso Mensual: usar siempre tasa de cierre del período
+    (último día del mes del período), para mantener coherencia en todos los
+    egresos del mes aunque se carguen/editen en fechas distintas.
     """
-    f_mov = _parse_iso_date(fecha_mov) or _periodo_inicio
-    if f_mov is None:
+    if _periodo_cierre is None:
         return float(_tasa_g or 0), None
-    f_aplicada = min(f_mov, _periodo_cierre) if _periodo_cierre else f_mov
+    f_aplicada = _periodo_cierre
     try:
         tc, _ = resolver_tasa_para_fecha(get_supabase_client(), f_aplicada.isoformat())
         tc_f = float(tc or 0)
@@ -202,12 +203,10 @@ def _tasa_para_conversion(fecha_mov: str | None) -> tuple[float, str | None]:
 
 
 def _fecha_tc_aplicada(fecha_mov: str | None) -> str:
-    """Fecha sobre la que se aplica la tasa (con tope al cierre del período)."""
-    f_mov = _parse_iso_date(fecha_mov) or _periodo_inicio
-    if f_mov is None:
+    """Fecha sobre la que se aplica la tasa (cierre del período)."""
+    if _periodo_cierre is None:
         return "—"
-    f_aplicada = min(f_mov, _periodo_cierre) if _periodo_cierre else f_mov
-    return f_aplicada.isoformat()
+    return _periodo_cierre.isoformat()
 
 try:
     egresos_list = repo_mov.get_by_tipo(condominio_id, periodo_db, "egreso")
@@ -456,8 +455,8 @@ if not cerrado:
         st.caption(
             "Suba el histórico de operaciones del banco. "
             "El sistema detecta automáticamente las columnas de fecha, monto, "
-            "beneficiario y concepto. La tasa BCV se aplica según la **fecha de cada pago**; "
-            "si la fecha supera el período trabajado, usa la tasa del **cierre del período**."
+            "beneficiario y concepto. Para mantener consistencia del mes, la conversión usa "
+            "la tasa BCV del **cierre del período** (último día del mes trabajado)."
         )
 
         if st.session_state.pop("_flash_import_ok", False):
@@ -564,11 +563,10 @@ if not cerrado:
                         _client_imp = get_supabase_client()
                         fechas_unicas = {str(f["fecha"]) for f in filas_prev}
                         for fd_str in fechas_unicas:
-                            _f_fd = _parse_iso_date(fd_str) or _periodo_inicio
-                            if _f_fd is None:
+                            if _periodo_cierre is None:
                                 _bcv_cache[fd_str] = 0.0
                                 continue
-                            _f_apl = min(_f_fd, _periodo_cierre) if _periodo_cierre else _f_fd
+                            _f_apl = _periodo_cierre
                             tasa_fd, _ = resolver_tasa_para_fecha(_client_imp, _f_apl.isoformat())
                             _bcv_cache[fd_str] = float(tasa_fd or 0)
 
@@ -578,10 +576,7 @@ if not cerrado:
                             usd_v = round(f["monto_bs"] / tasa_fd, 2) if tasa_fd > 0 else 0.0
                             rows_prev_ui.append({
                                 "Fecha": str(f["fecha"]),
-                                "Fecha TC": (
-                                    (min(_parse_iso_date(str(f["fecha"])), _periodo_cierre).isoformat())
-                                    if (_parse_iso_date(str(f["fecha"])) and _periodo_cierre) else str(f["fecha"])
-                                )[:10],
+                                "Fecha TC": (_periodo_cierre.isoformat() if _periodo_cierre else "—"),
                                 "Referencia": f["referencia"],
                                 "Descripción": f["descripcion"],
                                 "Bs.": f"{f['monto_bs']:,.2f}",
