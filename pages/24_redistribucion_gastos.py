@@ -90,11 +90,41 @@ def _similitud(a: frozenset, b: frozenset) -> float:
     return max(jaccard, seq * 0.8)
 
 
+def _periodo_marker(text: str) -> tuple[str | None, str | None]:
+    """
+    Detecta mes/año explícito en la descripción para evitar mezclar gastos de
+    períodos distintos dentro de un mismo grupo sugerido.
+    """
+    t = (text or "").lower()
+    mes = next((m for m in _MESES_NOISE if re.search(rf"\b{m}\b", t)), None)
+    m_year = re.search(r"\b(20\d{2})\b", t)
+    anio = m_year.group(1) if m_year else None
+    return mes, anio
+
+
+def _periodo_compatible(a: tuple[str | None, str | None], b: tuple[str | None, str | None]) -> bool:
+    """
+    Compatible si no hay conflicto explícito:
+    - Si ambos tienen mes, debe ser el mismo.
+    - Si ambos tienen año, debe ser el mismo.
+    """
+    a_mes, a_anio = a
+    b_mes, b_anio = b
+    if a_mes and b_mes and a_mes != b_mes:
+        return False
+    if a_anio and b_anio and a_anio != b_anio:
+        return False
+    return True
+
+
 def sugerir_grupos(
     descripciones: list[str], threshold: float = 0.55
 ) -> dict[str, str]:
     """Devuelve {descripcion: nombre_grupo_sugerido}."""
     tok_map: dict[str, frozenset] = {d: _tokens(d) for d in descripciones}
+    per_map: dict[str, tuple[str | None, str | None]] = {
+        d: _periodo_marker(d) for d in descripciones
+    }
     grupos: dict[str, list[str]] = {}   # nombre_grupo → [descs]
     asignados: dict[str, str]    = {}   # desc → nombre_grupo
 
@@ -102,10 +132,16 @@ def sugerir_grupos(
         if desc in asignados:
             continue
         toks = tok_map[desc]
+        per_desc = per_map[desc]
         mejor: str | None = None
         mejor_sim: float  = threshold
 
         for nombre_grupo in grupos:
+            per_g = per_map.get(nombre_grupo, _periodo_marker(nombre_grupo))
+            # No consolidar automáticamente conceptos con mes/año explícitos distintos
+            # (ej: "Corpoelec Febrero" vs "Corpoelec Marzo").
+            if not _periodo_compatible(per_desc, per_g):
+                continue
             g_toks = tok_map.get(nombre_grupo, _tokens(nombre_grupo))
             s = _similitud(toks, g_toks)
             if s > mejor_sim:
@@ -399,6 +435,10 @@ with col_btn_norm:
                 )
                 cat_state[g] = sug["subcategoria_codigo"] if sug else "OTROS_SIN_CLASIFICAR"
         st.rerun()
+st.caption(
+    "La re-sugerencia automática ahora **separa por período** cuando detecta meses/años distintos "
+    "(ej. febrero vs marzo) para evitar consolidaciones cruzadas."
+)
 
 st.caption(
     "Edita la columna **Grupo**. La tabla va en un recuadro con scroll; **justo debajo** verás "
