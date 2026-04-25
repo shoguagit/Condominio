@@ -44,7 +44,17 @@ def load_proveedores():
 
 def load_facturas(solo_mes: bool = True):
     if solo_mes and mes_proceso:
-        mp = mes_proceso[:7] + "-01" if len(str(mes_proceso)) >= 7 else None
+        try:
+            if "/" in mes_proceso:
+                partes = mes_proceso.split("/")
+                if len(partes) == 2:
+                    mp = f"{partes[1]}-{partes[0]}-01"
+                else:
+                    mp = None
+            else:
+                mp = mes_proceso[:7] + "-01" if len(str(mes_proceso)) >= 7 else None
+        except Exception:
+            mp = None
         if mp:
             return repo_fact.get_by_mes_proceso(condominio_id, mp)
     return repo_fact.get_all(condominio_id)
@@ -185,7 +195,14 @@ with col_main:
                 total  = st.number_input("Total *", value=float(fc.get("total") or 0), min_value=0.0, step=0.01, format="%.2f")
                 pagado = st.number_input("Monto pagado", value=float(fc.get("pagado") or 0), min_value=0.0, step=0.01, format="%.2f")
 
-            mp_value = mes_proceso[:7] + "-01" if mes_proceso and len(str(mes_proceso)) >= 7 else None
+            try:
+                if "/" in mes_proceso:
+                    partes = mes_proceso.split("/")
+                    mp_value = f"{partes[1]}-{partes[0]}-01" if len(partes) == 2 else None
+                else:
+                    mp_value = mes_proceso[:7] + "-01" if mes_proceso and len(str(mes_proceso)) >= 7 else None
+            except Exception:
+                mp_value = None
 
             col_s, col_c = st.columns(2)
             with col_s:
