@@ -4,7 +4,12 @@
 -- =============================================================================
 
 ALTER TABLE condominios
+    ADD COLUMN IF NOT EXISTS smtp_host VARCHAR(255),
+    ADD COLUMN IF NOT EXISTS smtp_port INTEGER,
+    ADD COLUMN IF NOT EXISTS smtp_usuario VARCHAR(255),
+    ADD COLUMN IF NOT EXISTS smtp_password VARCHAR(255),
     ADD COLUMN IF NOT EXISTS smtp_email VARCHAR(255),
+    ADD COLUMN IF NOT EXISTS smtp_secure BOOLEAN DEFAULT TRUE,
     ADD COLUMN IF NOT EXISTS smtp_app_password VARCHAR(255),
     ADD COLUMN IF NOT EXISTS smtp_nombre_remitente VARCHAR(255)
         DEFAULT 'Administración del Condominio';

@@ -5,6 +5,7 @@ Métricas del dashboard principal (período en proceso, datos reales Supabase).
 from __future__ import annotations
 
 import calendar
+import re
 from datetime import date
 from typing import Any
 
@@ -18,6 +19,19 @@ from utils.validators import date_periodo_to_mm_yyyy
 
 def _as_int_condo(condominio_id: int | str) -> int:
     return int(condominio_id)
+
+
+def _norm_periodo(periodo: str) -> str:
+    """Convierte periodo a formato YYYY-MM-DD para la base de datos."""
+    if not periodo:
+        return periodo
+    s = str(periodo).strip()
+    if re.match(r"^\d{4}-\d{2}$", s):
+        return f"{s}-01"
+    if re.match(r"^\d{2}/\d{4}$", s):
+        mm, yyyy = s.split("/")
+        return f"{yyyy}-{mm}-01"
+    return s
 
 
 def _norm_periodo_key(p: Any) -> str:
@@ -61,7 +75,7 @@ class DashboardRepository:
             self.client.table("cuotas_unidad")
             .select("cuota_calculada_bs, cobros_extraordinarios")
             .eq("condominio_id", cid)
-            .eq("periodo", periodo)
+            .eq("periodo", _norm_periodo(periodo))
             .execute()
         ).data or []
 
@@ -76,7 +90,7 @@ class DashboardRepository:
             self.client.table("pagos")
             .select("monto_bs")
             .eq("condominio_id", cid)
-            .eq("periodo", periodo)
+            .eq("periodo", _norm_periodo(periodo))
             .execute()
         ).data or []
         total_cobrado_bs = sum(float(r.get("monto_bs") or 0) for r in prow)
@@ -125,7 +139,7 @@ class DashboardRepository:
                 "unidades(codigo, numero), propietarios(nombre, correo)"
             )
             .eq("condominio_id", cid)
-            .eq("periodo", periodo)
+            .eq("periodo", _norm_periodo(periodo))
             .execute()
         ).data or []
 
@@ -198,7 +212,7 @@ class DashboardRepository:
             self.client.table("movimientos")
             .select("monto_bs, tipo")
             .eq("condominio_id", _as_int_condo(condominio_id))
-            .eq("periodo", periodo)
+            .eq("periodo", _norm_periodo(periodo))
             .execute()
         ).data or []
 
@@ -223,11 +237,16 @@ class DashboardRepository:
     @safe_db_operation("dashboard.obtener_saldo_banco")
     def obtener_saldo_banco(self, condominio_id: int | str, periodo: str) -> dict:
         cid = _as_int_condo(condominio_id)
+        
+        periodo_norm = periodo
+        if periodo and re.match(r"^\d{4}-\d{2}$", periodo):
+            periodo_norm = f"{periodo}-01"
+        
         rows = (
             self.client.table("movimientos")
             .select("monto_bs, tipo, conciliado")
             .eq("condominio_id", cid)
-            .eq("periodo", periodo)
+            .eq("periodo", _norm_periodo(periodo))
             .execute()
         ).data or []
 
@@ -251,7 +270,7 @@ class DashboardRepository:
             self.client.table("conciliaciones")
             .select("id")
             .eq("condominio_id", cid)
-            .eq("periodo", ym)
+            .eq("periodo", _norm_periodo(ym))
             .limit(1)
             .execute()
         ).data or []
@@ -271,7 +290,7 @@ class DashboardRepository:
             self.client.table("procesos_mensuales")
             .select("*")
             .eq("condominio_id", cid)
-            .eq("periodo", periodo)
+            .eq("periodo", _norm_periodo(periodo))
             .limit(1)
             .execute()
         ).data
@@ -293,7 +312,7 @@ class DashboardRepository:
             self.client.table("cuotas_unidad")
             .select("id")
             .eq("condominio_id", cid)
-            .eq("periodo", periodo)
+            .eq("periodo", _norm_periodo(periodo))
             .limit(1)
             .execute()
         ).data or []
@@ -303,7 +322,7 @@ class DashboardRepository:
             self.client.table("pagos")
             .select("monto_bs")
             .eq("condominio_id", cid)
-            .eq("periodo", periodo)
+            .eq("periodo", _norm_periodo(periodo))
             .execute()
         ).data or []
         hay_pagos = sum(float(r.get("monto_bs") or 0) for r in pagos_sum) > 0

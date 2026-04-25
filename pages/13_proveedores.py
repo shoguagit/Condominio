@@ -72,7 +72,14 @@ def load_proveedores():
 def load_facturas(solo_mes: bool = True):
     with st.spinner("Cargando facturas..."):
         if solo_mes and mes_proceso:
-            mp = mes_proceso[:7] + "-01" if len(mes_proceso) > 7 else mes_proceso
+            try:
+                if "/" in mes_proceso:
+                    partes = mes_proceso.split("/")
+                    mp = f"{partes[1]}-{partes[0]}-01" if len(partes) == 2 else mes_proceso
+                else:
+                    mp = mes_proceso[:7] + "-01" if len(mes_proceso) > 7 else mes_proceso
+            except Exception:
+                mp = mes_proceso
             return repo_fact.get_by_mes_proceso(condominio_id, mp)
         return repo_fact.get_all(condominio_id)
 
@@ -471,7 +478,14 @@ with tab_fact:
                                                   min_value=0.0, step=0.01, format="%.2f")
 
                 # Mes proceso
-                mp_value = mes_proceso[:7] + "-01" if mes_proceso and len(mes_proceso) >= 7 else None
+                try:
+                    if "/" in mes_proceso:
+                        partes = mes_proceso.split("/")
+                        mp_value = f"{partes[1]}-{partes[0]}-01" if len(partes) == 2 else None
+                    else:
+                        mp_value = mes_proceso[:7] + "-01" if mes_proceso and len(mes_proceso) >= 7 else None
+                except Exception:
+                    mp_value = None
 
                 col_s, col_c = st.columns(2)
                 with col_s:
