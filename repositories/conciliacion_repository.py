@@ -9,6 +9,27 @@ from utils.conciliacion_match import sugerir_vinculacion_desde_filas
 from utils.error_handler import DatabaseError, safe_db_operation
 
 
+def query_pagos_por_ids(
+    client: Client, condominio_id: int, pago_ids: list[int]
+) -> dict[int, dict]:
+    """
+    Pagos por lista de IDs con unidades (sin embed desde movimientos).
+    Función de módulo para usar desde páginas Streamlit sin depender de instancias
+    cacheadas de ConciliacionRepository (evita AttributeError tras redeploy).
+    """
+    if not pago_ids:
+        return {}
+    ids_u = sorted({int(i) for i in pago_ids})
+    rows = (
+        client.table("pagos")
+        .select("*, unidades(codigo, numero)")
+        .eq("condominio_id", condominio_id)
+        .in_("id", ids_u)
+        .execute()
+    ).data or []
+    return {int(r["id"]): r for r in rows}
+
+
 class ConciliacionRepository:
     def __init__(self, client: Client):
         self.client = client
@@ -103,17 +124,7 @@ class ConciliacionRepository:
         self, condominio_id: int, pago_ids: list[int]
     ) -> dict[int, dict]:
         """Para PDF/informes sin embed PostgREST movimientos↔pagos (varias FK)."""
-        if not pago_ids:
-            return {}
-        ids_u = sorted({int(i) for i in pago_ids})
-        rows = (
-            self.client.table(self._pag)
-            .select("*, unidades(codigo, numero)")
-            .eq("condominio_id", condominio_id)
-            .in_("id", ids_u)
-            .execute()
-        ).data or []
-        return {int(r["id"]): r for r in rows}
+        return query_pagos_por_ids(self.client, condominio_id, pago_ids)
 
     @safe_db_operation("conciliacion.confirmar_vinculacion")
     def confirmar_vinculacion(

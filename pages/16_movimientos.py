@@ -9,7 +9,7 @@ from repositories.movimiento_repository import MovimientoRepository
 from repositories.concepto_repository import ConceptoRepository
 from repositories.unidad_repository import UnidadRepository
 from repositories.propietario_repository import PropietarioRepository
-from repositories.conciliacion_repository import ConciliacionRepository
+from repositories.conciliacion_repository import ConciliacionRepository, query_pagos_por_ids
 from repositories.conciliacion_cedula_repository import ConciliacionCedulaRepository
 from components.header import render_header
 from components.breadcrumb import render_breadcrumb
@@ -88,7 +88,7 @@ condominio_id = require_condominio()
 
 # Bump cuando cambie la firma/lógica de los repos; si no, Streamlit puede seguir
 # usando instancias cacheadas viejas (p. ej. métodos con @safe_db_operation obsoleto).
-_REPOS_CACHE_KEY = 7
+_REPOS_CACHE_KEY = 8
 
 
 @st.cache_resource
@@ -849,10 +849,12 @@ with tab_conciliacion:
             pagos_por_id = {}
             if pago_ids_pdf:
                 try:
-                    pagos_por_id = repo_conciliacion.obtener_pagos_por_ids(
-                        condominio_id, pago_ids_pdf
+                    # Cliente del repo movimiento (misma credencial); evita AttributeError
+                    # si @st.cache_resource conservó una instancia vieja del repo conciliación.
+                    pagos_por_id = query_pagos_por_ids(
+                        repo_mov.client, condominio_id, pago_ids_pdf
                     )
-                except DatabaseError:
+                except Exception:
                     pagos_por_id = {}
 
             nombre_condo = str(st.session_state.get("condominio_nombre") or "Condominio")
