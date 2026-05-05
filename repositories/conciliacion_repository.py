@@ -98,6 +98,23 @@ class ConciliacionRepository:
             .execute()
         ).data or []
 
+    @safe_db_operation("conciliacion.obtener_pagos_por_ids")
+    def obtener_pagos_por_ids(
+        self, condominio_id: int, pago_ids: list[int]
+    ) -> dict[int, dict]:
+        """Para PDF/informes sin embed PostgREST movimientos↔pagos (varias FK)."""
+        if not pago_ids:
+            return {}
+        ids_u = sorted({int(i) for i in pago_ids})
+        rows = (
+            self.client.table(self._pag)
+            .select("*, unidades(codigo, numero)")
+            .eq("condominio_id", condominio_id)
+            .in_("id", ids_u)
+            .execute()
+        ).data or []
+        return {int(r["id"]): r for r in rows}
+
     @safe_db_operation("conciliacion.confirmar_vinculacion")
     def confirmar_vinculacion(
         self, movimiento_id: int, pago_id: int, usuario: str

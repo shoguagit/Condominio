@@ -88,7 +88,7 @@ condominio_id = require_condominio()
 
 # Bump cuando cambie la firma/lógica de los repos; si no, Streamlit puede seguir
 # usando instancias cacheadas viejas (p. ej. métodos con @safe_db_operation obsoleto).
-_REPOS_CACHE_KEY = 6
+_REPOS_CACHE_KEY = 7
 
 
 @st.cache_resource
@@ -835,21 +835,42 @@ with tab_conciliacion:
                 pagos_reporte = []
             try:
                 ing_all = repo_mov.get_by_tipo(
-                    condominio_id,
-                    periodo_db_conc,
-                    "ingreso",
-                    embed_pago=True,
+                    condominio_id, periodo_db_conc, "ingreso"
                 )
             except DatabaseError as e:
                 st.error(f"❌ Cargando movimientos para reportes: {e}")
                 ing_all = []
+
+            pago_ids_pdf = [
+                int(r["pago_id"])
+                for r in ing_all
+                if r.get("conciliado") and r.get("pago_id") is not None
+            ]
+            pagos_por_id = {}
+            if pago_ids_pdf:
+                try:
+                    pagos_por_id = repo_conciliacion.obtener_pagos_por_ids(
+                        condominio_id, pago_ids_pdf
+                    )
+                except DatabaseError:
+                    pagos_por_id = {}
 
             nombre_condo = str(st.session_state.get("condominio_nombre") or "Condominio")
             periodo_etiqueta = (
                 str(periodo_conc or "").strip() or periodo_ym_conc.replace("-", "/")
             )
             pend_reporte = [r for r in ing_all if not r.get("conciliado")]
-            conc_reporte = [r for r in ing_all if r.get("conciliado")]
+            conc_reporte = []
+            for r in ing_all:
+                if not r.get("conciliado"):
+                    continue
+                m = dict(r)
+                pid = m.get("pago_id")
+                if pid is not None:
+                    p = pagos_por_id.get(int(pid))
+                    if p:
+                        m["pagos"] = p
+                conc_reporte.append(m)
             rep_a, rep_b = st.columns(2)
             sufijo_fn = periodo_ym_conc.replace("-", "")
             with rep_a:
