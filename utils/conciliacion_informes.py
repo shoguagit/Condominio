@@ -21,6 +21,24 @@ from utils.estado_cuenta_pdf import _esc
 COLOR_TITULO = colors.HexColor("#1B4F72")
 
 
+def _apartamento_mov(mov: dict) -> str:
+    u = mov.get("unidades") or {}
+    return (u.get("codigo") or u.get("numero") or "").strip() or "—"
+
+
+def _texto_concepto_movimiento(mov: dict) -> str:
+    """Concepto + descripción del banco para revisar cuando no hay cédula detectada."""
+    conceptos = mov.get("conceptos") or {}
+    nombre = (conceptos.get("nombre") or "").strip()
+    desc = str(mov.get("descripcion") or "").strip()
+    parts: list[str] = []
+    if nombre:
+        parts.append(f"Concepto: {nombre}")
+    if desc:
+        parts.append(desc[:320])
+    return " — ".join(parts) if parts else "Sin concepto ni descripción en el movimiento."
+
+
 def _normalizar_tipo_alerta(ta: Any) -> str:
     s = (ta or "").strip()
     return s if s else ""
@@ -70,11 +88,21 @@ def _fila_pendiente_tabla(mov: dict, sug: dict | None) -> list[str]:
     fecha = str(mov.get("fecha") or "")[:10]
     ref = str(mov.get("referencia") or "").strip() or "—"
     monto = f"{float(mov.get('monto_bs') or 0):,.2f}"
-    obs, expl = observacion_y_explicacion_corta(mov, sug)
+    desc = str(mov.get("descripcion") or "")
+    ceds = extraer_cedulas(desc)
+    ced_txt = ", ".join(ceds) if ceds else "—"
+    apt_txt = _apartamento_mov(mov) if ceds else "—"
+    obs, expl_std = observacion_y_explicacion_corta(mov, sug)
+    if ceds:
+        expl = expl_std
+    else:
+        expl = _texto_concepto_movimiento(mov)
     return [
         _esc(fecha),
         _esc(ref),
         _esc(monto),
+        _esc(ced_txt),
+        _esc(apt_txt),
         _esc(obs),
         _esc(expl),
     ]
@@ -117,7 +145,7 @@ def _tabla_estilo() -> TableStyle:
             ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#D6E4F0")),
             ("TEXTCOLOR", (0, 0), (-1, 0), colors.black),
             ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
-            ("FONTSIZE", (0, 0), (-1, -1), 7),
+            ("FONTSIZE", (0, 0), (-1, -1), 6),
             ("VALIGN", (0, 0), (-1, -1), "TOP"),
             ("GRID", (0, 0), (-1, -1), 0.25, colors.grey),
             ("ROWBACKGROUNDS", (0, 1), (-1, -1), colors_alt),
@@ -156,7 +184,15 @@ def generar_pdf_sin_conciliar(
         spaceAfter=12,
     )
 
-    hdr = ["Fecha", "Referencia", "Monto (Bs.)", "Observación", "Explicación"]
+    hdr = [
+        "Fecha",
+        "Referencia",
+        "Monto (Bs.)",
+        "Cédula",
+        "Apartamento",
+        "Observación",
+        "Explicación",
+    ]
     data: list[list[str]] = [hdr]
 
     ordenados = sorted(
@@ -188,7 +224,15 @@ def generar_pdf_sin_conciliar(
             )
         )
         story.append(Spacer(1, 0.25 * cm))
-        col_w = [2.4 * cm, 3.2 * cm, 2.2 * cm, 5.5 * cm, 11.5 * cm]
+        col_w = [
+            2 * cm,
+            2.6 * cm,
+            1.9 * cm,
+            2.4 * cm,
+            2 * cm,
+            4 * cm,
+            10 * cm,
+        ]
         t = Table(data, repeatRows=1, colWidths=col_w)
         t.setStyle(_tabla_estilo())
         story.append(t)
@@ -229,10 +273,15 @@ def generar_pdf_conciliados_revision(
 
     hdr = ["Fecha", "Referencia", "Cédula", "Apartamento", "Monto (Bs.)", "Estatus"]
     data: list[list[str]] = [hdr]
-    ordenados = sorted(
-        conciliados,
-        key=lambda r: (str(r.get("fecha") or ""), int(r["id"])),
-    )
+    def _clave_apto(m: dict) -> tuple[str, str, int]:
+        p = _pago_embed(m) or {}
+        u = p.get("unidades") or m.get("unidades") or {}
+        apt = (u.get("codigo") or u.get("numero") or "").strip().lower()
+        # Sin apartamento al final; desempate por fecha e id
+        apt_ord = apt if apt else "\uffff"
+        return (apt_ord, str(m.get("fecha") or ""), int(m["id"]))
+
+    ordenados = sorted(conciliados, key=_clave_apto)
     for mov in ordenados:
         data.append(_fila_conciliado_tabla(mov))
 
