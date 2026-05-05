@@ -22,6 +22,7 @@ from utils.error_handler import DatabaseError
 from utils.supabase_compat import json_safe_date, json_safe_periodo
 from utils.validators import validate_periodo, periodo_to_date_str
 from utils.conciliacion_informes import (
+    enriquecer_apartamentos_desde_cedula_bd,
     generar_pdf_conciliados_revision,
     generar_pdf_sin_conciliar,
 )
@@ -877,6 +878,14 @@ with tab_conciliacion:
             sufijo_fn = periodo_ym_conc.replace("-", "")
             with rep_a:
                 try:
+                    try:
+                        enriquecer_apartamentos_desde_cedula_bd(
+                            pend_reporte,
+                            int(condominio_id),
+                            repo_conc_ced,
+                        )
+                    except Exception:
+                        pass
                     pdf_no = generar_pdf_sin_conciliar(
                         nombre_condo,
                         periodo_etiqueta,

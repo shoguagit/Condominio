@@ -26,6 +26,50 @@ def _apartamento_mov(mov: dict) -> str:
     return (u.get("codigo") or u.get("numero") or "").strip() or "—"
 
 
+def enriquecer_apartamentos_desde_cedula_bd(
+    pendientes: list[dict],
+    condominio_id: int,
+    repo_ced: Any,
+) -> None:
+    """
+    Para cada movimiento con cédula en la descripción, busca apartamento(s) en BD
+    (misma lógica que conciliación por cédula). Guarda `_apartamento_desde_cedula`.
+    """
+    from repositories.conciliacion_cedula_repository import _cedula_coincide_lista
+
+    todas_ceds: list[str] = []
+    for m in pendientes:
+        todas_ceds.extend(extraer_cedulas(str(m.get("descripcion") or "")))
+    seen: set[str] = set()
+    uniq: list[str] = []
+    for c in todas_ceds:
+        if c not in seen:
+            seen.add(c)
+            uniq.append(c)
+    if not uniq:
+        return
+    try:
+        todas_filas = repo_ced.buscar_unidades_por_cedula(uniq, int(condominio_id))
+    except Exception:
+        return
+    if not todas_filas:
+        return
+    for m in pendientes:
+        mc = extraer_cedulas(str(m.get("descripcion") or ""))
+        if not mc:
+            continue
+        codigos = sorted(
+            {
+                str(r.get("codigo_unidad") or "").strip()
+                for r in todas_filas
+                if _cedula_coincide_lista(mc, r.get("cedula_encontrada"))
+                and (str(r.get("codigo_unidad") or "").strip())
+            }
+        )
+        if codigos:
+            m["_apartamento_desde_cedula"] = ", ".join(codigos)
+
+
 def _texto_concepto_movimiento(mov: dict) -> str:
     """Concepto + descripción del banco para revisar cuando no hay cédula detectada."""
     conceptos = mov.get("conceptos") or {}
@@ -91,7 +135,12 @@ def _fila_pendiente_tabla(mov: dict, sug: dict | None) -> list[str]:
     desc = str(mov.get("descripcion") or "")
     ceds = extraer_cedulas(desc)
     ced_txt = ", ".join(ceds) if ceds else "—"
-    apt_txt = _apartamento_mov(mov) if ceds else "—"
+    if ceds:
+        apt_bd = (mov.get("_apartamento_desde_cedula") or "").strip()
+        apt_mov = _apartamento_mov(mov)
+        apt_txt = apt_bd or (apt_mov if apt_mov != "—" else "—")
+    else:
+        apt_txt = "—"
     obs, expl_std = observacion_y_explicacion_corta(mov, sug)
     if ceds:
         expl = expl_std
