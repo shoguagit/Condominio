@@ -31,8 +31,10 @@ class MovimientoRepository:
     ) -> list[dict]:
         sel = "*, conceptos(nombre), unidades(id, codigo, numero), propietarios(id, nombre)"
         if embed_pago:
+            # PostgREST exige FK explícita: hay dos relaciones movimientos ↔ pagos
+            # (pago_id en movimiento vs movimiento_id en pago).
             sel += (
-                ", pagos(id, fecha_pago, referencia, monto_bs, metodo, tipo_pago, "
+                ", pagos!movimientos_pago_id_fkey(id, fecha_pago, referencia, monto_bs, metodo, tipo_pago, "
                 "origen, observaciones, unidades(codigo, numero))"
             )
         query = (

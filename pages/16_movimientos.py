@@ -88,7 +88,7 @@ condominio_id = require_condominio()
 
 # Bump cuando cambie la firma/lógica de los repos; si no, Streamlit puede seguir
 # usando instancias cacheadas viejas (p. ej. métodos con @safe_db_operation obsoleto).
-_REPOS_CACHE_KEY = 5
+_REPOS_CACHE_KEY = 6
 
 
 @st.cache_resource
