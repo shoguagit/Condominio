@@ -4,7 +4,8 @@ from __future__ import annotations
 
 from supabase import Client
 
-from utils.conciliacion import evaluar_estado_conciliacion, sugerir_vinculacion_desde_filas
+from utils.conciliacion import evaluar_estado_conciliacion
+from utils.conciliacion_match import sugerir_vinculacion_desde_filas
 from utils.error_handler import DatabaseError, safe_db_operation
 
 

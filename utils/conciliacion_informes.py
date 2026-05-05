@@ -14,7 +14,7 @@ from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
 from reportlab.lib.units import cm
 from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
 
-from utils.conciliacion import sugerir_vinculacion_desde_filas
+from utils.conciliacion_match import sugerir_vinculacion_desde_filas
 from utils.estado_cuenta_pdf import _esc
 
 COLOR_TITULO = colors.HexColor("#1B4F72")
