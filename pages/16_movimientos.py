@@ -882,7 +882,7 @@ with tab_conciliacion:
                         enriquecer_apartamentos_desde_cedula_bd(
                             pend_reporte,
                             int(condominio_id),
-                            repo_conc_ced,
+                            repo_mov.client,
                         )
                     except Exception:
                         pass

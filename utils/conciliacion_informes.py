@@ -29,41 +29,38 @@ def _apartamento_mov(mov: dict) -> str:
 def enriquecer_apartamentos_desde_cedula_bd(
     pendientes: list[dict],
     condominio_id: int,
-    repo_ced: Any,
+    client: Any,
 ) -> None:
     """
     Para cada movimiento con cédula en la descripción, busca apartamento(s) en BD
-    (misma lógica que conciliación por cédula). Guarda `_apartamento_desde_cedula`.
-    """
-    from repositories.conciliacion_cedula_repository import _cedula_coincide_lista
+    con la misma lógica que la conciliación por cédula.
 
-    todas_ceds: list[str] = []
-    for m in pendientes:
-        todas_ceds.extend(extraer_cedulas(str(m.get("descripcion") or "")))
-    seen: set[str] = set()
-    uniq: list[str] = []
-    for c in todas_ceds:
-        if c not in seen:
-            seen.add(c)
-            uniq.append(c)
-    if not uniq:
-        return
-    try:
-        todas_filas = repo_ced.buscar_unidades_por_cedula(uniq, int(condominio_id))
-    except Exception:
-        return
-    if not todas_filas:
-        return
+    Usa un repositorio nuevo con el cliente Supabase (no la instancia cacheada de
+    Streamlit), y una consulta por combinación de cédulas para evitar fallos del
+    filtrado por lote.
+    """
+    from repositories.conciliacion_cedula_repository import ConciliacionCedulaRepository
+
+    repo_tmp = ConciliacionCedulaRepository(client)
+    cache: dict[tuple[str, ...], list[dict]] = {}
     for m in pendientes:
         mc = extraer_cedulas(str(m.get("descripcion") or ""))
         if not mc:
             continue
+        key = tuple(sorted(set(mc)))
+        if key not in cache:
+            try:
+                cache[key] = repo_tmp.buscar_unidades_por_cedula(
+                    list(key), int(condominio_id)
+                ) or []
+            except Exception:
+                cache[key] = []
+        filas = cache[key]
         codigos = sorted(
             {
                 str(r.get("codigo_unidad") or "").strip()
-                for r in todas_filas
-                if _cedula_coincide_lista(mc, r.get("cedula_encontrada"))
-                and (str(r.get("codigo_unidad") or "").strip())
+                for r in filas
+                if (str(r.get("codigo_unidad") or "").strip())
             }
         )
         if codigos:
