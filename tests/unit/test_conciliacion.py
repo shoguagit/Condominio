@@ -2,7 +2,11 @@
 
 from datetime import date
 
-from utils.conciliacion import clasificar_alerta, evaluar_estado_conciliacion
+from utils.conciliacion import (
+    clasificar_alerta,
+    evaluar_estado_conciliacion,
+    sugerir_vinculacion_desde_filas,
+)
 
 
 def test_clasificar_alerta_pago_parcial():
@@ -37,3 +41,25 @@ def test_diferencia_cero_permite_cierre():
 
 def test_diferencia_no_cero_bloquea_cierre():
     assert evaluar_estado_conciliacion(1000.0, 999.0) == "con_diferencias"
+
+
+def test_sugerir_vinculacion_por_referencia_alta():
+    mov = {
+        "tipo": "ingreso",
+        "referencia": "REF-1",
+        "monto_bs": 100.0,
+        "fecha": "2026-02-10",
+    }
+    pagos = [
+        {
+            "id": 42,
+            "referencia": "REF-1",
+            "monto_bs": 100.0,
+            "fecha_pago": "2026-02-10",
+            "unidades": {"codigo": "A"},
+        }
+    ]
+    s = sugerir_vinculacion_desde_filas(mov, pagos)
+    assert s is not None
+    assert s["confianza"] == "alta"
+    assert s["pago"]["id"] == 42

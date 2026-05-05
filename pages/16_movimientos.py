@@ -21,6 +21,10 @@ from utils.cedula_extractor import extraer_cedulas
 from utils.error_handler import DatabaseError
 from utils.supabase_compat import json_safe_date, json_safe_periodo
 from utils.validators import validate_periodo, periodo_to_date_str
+from utils.conciliacion_informes import (
+    generar_pdf_conciliados_revision,
+    generar_pdf_sin_conciliar,
+)
 
 
 def convertir_periodo(periodo_mmyyyy: str) -> str:
@@ -84,7 +88,7 @@ condominio_id = require_condominio()
 
 # Bump cuando cambie la firma/lógica de los repos; si no, Streamlit puede seguir
 # usando instancias cacheadas viejas (p. ej. métodos con @safe_db_operation obsoleto).
-_REPOS_CACHE_KEY = 4
+_REPOS_CACHE_KEY = 5
 
 
 @st.cache_resource
@@ -818,6 +822,75 @@ with tab_conciliacion:
             st.progress(prog, text=f"Progreso: {estado['total_conciliados']} / {tot}")
 
             st.divider()
+            st.subheader("📥 Reportes de conciliación")
+            st.caption(
+                "Descargue PDF con movimientos pendientes (motivos y requisitos) y PDF de revisión "
+                "de los ya conciliados."
+            )
+            try:
+                pagos_reporte = repo_conciliacion.obtener_pagos_periodo(
+                    condominio_id, periodo_db_conc
+                )
+            except DatabaseError:
+                pagos_reporte = []
+            try:
+                ing_all = repo_mov.get_by_tipo(
+                    condominio_id,
+                    periodo_db_conc,
+                    "ingreso",
+                    embed_pago=True,
+                )
+            except DatabaseError as e:
+                st.error(f"❌ Cargando movimientos para reportes: {e}")
+                ing_all = []
+
+            nombre_condo = str(st.session_state.get("condominio_nombre") or "Condominio")
+            periodo_etiqueta = (
+                str(periodo_conc or "").strip() or periodo_ym_conc.replace("-", "/")
+            )
+            pend_reporte = [r for r in ing_all if not r.get("conciliado")]
+            conc_reporte = [r for r in ing_all if r.get("conciliado")]
+            rep_a, rep_b = st.columns(2)
+            sufijo_fn = periodo_ym_conc.replace("-", "")
+            with rep_a:
+                try:
+                    pdf_no = generar_pdf_sin_conciliar(
+                        nombre_condo,
+                        periodo_etiqueta,
+                        pend_reporte,
+                        pagos_reporte,
+                    )
+                except Exception as ex:
+                    pdf_no = b""
+                    st.caption(f"No se pudo armar el PDF de pendientes: {ex}")
+                if pdf_no:
+                    st.download_button(
+                        "📄 PDF — Sin conciliar (motivos)",
+                        data=pdf_no,
+                        file_name=f"movimientos_sin_conciliar_{sufijo_fn}.pdf",
+                        mime="application/pdf",
+                        key="dl_pdf_conc_pendientes",
+                        use_container_width=True,
+                    )
+            with rep_b:
+                try:
+                    pdf_si = generar_pdf_conciliados_revision(
+                        nombre_condo, periodo_etiqueta, conc_reporte
+                    )
+                except Exception as ex:
+                    pdf_si = b""
+                    st.caption(f"No se pudo armar el PDF de conciliados: {ex}")
+                if pdf_si:
+                    st.download_button(
+                        "📄 PDF — Conciliados (revisión)",
+                        data=pdf_si,
+                        file_name=f"movimientos_conciliados_{sufijo_fn}.pdf",
+                        mime="application/pdf",
+                        key="dl_pdf_conc_hechos",
+                        use_container_width=True,
+                    )
+
+            st.divider()
             st.subheader("Alertas activas")
             alertas = estado.get("alertas") or []
             if alertas:
@@ -905,12 +978,6 @@ with tab_conciliacion:
 
             st.divider()
             st.subheader("Movimientos por conciliar")
-
-            try:
-                ing_all = repo_mov.get_by_tipo(condominio_id, periodo_db_conc, "ingreso")
-            except DatabaseError as e:
-                st.error(f"❌ {e}")
-                ing_all = []
 
             pendientes = [r for r in ing_all if not r.get("conciliado")]
             if not pendientes:
