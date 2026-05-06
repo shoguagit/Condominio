@@ -26,55 +26,62 @@ def _apartamento_mov(mov: dict) -> str:
     return (u.get("codigo") or u.get("numero") or "").strip() or "—"
 
 
-def enriquecer_apartamentos_desde_cedula_bd(
-    pendientes: list[dict],
-    condominio_id: int,
+def _lookup_apartamentos_y_estado_cedula(
     client: Any,
-) -> None:
+    condominio_id: int,
+    ceds: list[str],
+    cache: dict[tuple[str, ...], tuple[str, str]],
+) -> tuple[str, str]:
     """
-    Para cada movimiento con cédula en la descripción, busca apartamento(s) en BD
-    con la misma lógica que la conciliación por cédula.
+    Resuelve apartamento(s) y discrimina si la cédula no existe en BD o existe sin unidad.
 
-    Usa ``buscar_unidades_por_cedula_core`` (sin decorador que oculte errores) y
-    amplía la búsqueda a propietarios inactivos si hace falta, igual criterio
-    propietario→unidad que en conciliación por cédula.
+    Retorna (códigos_unidad_csv, estado) donde estado es:
+    - "" si hay unidades o no se pudo consultar;
+    - "sin_propietario" si ningún propietario coincide;
+    - "sin_unidad" si hay propietario pero ninguna unidad activa enlazada.
     """
-    from repositories.conciliacion_cedula_repository import buscar_unidades_por_cedula_core
-
-    cache: dict[tuple[str, ...], list[dict]] = {}
-    for m in pendientes:
-        mc = extraer_cedulas(str(m.get("descripcion") or ""))
-        if not mc:
-            continue
-        key = tuple(sorted(set(mc)))
-        if key not in cache:
-            try:
-                filas = buscar_unidades_por_cedula_core(
-                    client,
-                    list(key),
-                    int(condominio_id),
-                    solo_propietarios_activos=False,
-                )
-                if not filas:
-                    filas = buscar_unidades_por_cedula_core(
-                        client,
-                        list(key),
-                        int(condominio_id),
-                        solo_propietarios_activos=True,
-                    )
-                cache[key] = filas or []
-            except Exception:
-                cache[key] = []
-        filas = cache[key]
-        codigos = sorted(
-            {
-                str(r.get("codigo_unidad") or "").strip()
-                for r in filas
-                if (str(r.get("codigo_unidad") or "").strip())
-            }
+    if not ceds:
+        return "", ""
+    key = tuple(sorted(set(ceds)))
+    if key in cache:
+        return cache[key]
+    try:
+        from repositories.conciliacion_cedula_repository import (
+            buscar_unidades_por_cedula_core,
+            propietarios_coincidentes_cedula_core,
         )
-        if codigos:
-            m["_apartamento_desde_cedula"] = ", ".join(codigos)
+
+        for solo in (False, True):
+            filas = buscar_unidades_por_cedula_core(
+                client, list(key), int(condominio_id), solo_propietarios_activos=solo
+            ) or []
+            if filas:
+                codigos = sorted(
+                    {
+                        str(r.get("codigo_unidad") or "").strip()
+                        for r in filas
+                        if str(r.get("codigo_unidad") or "").strip()
+                    }
+                )
+                out = ", ".join(codigos) if codigos else ""
+                cache[key] = (out, "")
+                return cache[key]
+
+        props_any = propietarios_coincidentes_cedula_core(
+            client, list(key), int(condominio_id), solo_propietarios_activos=False
+        ) or []
+        if not props_any:
+            props_any = propietarios_coincidentes_cedula_core(
+                client, list(key), int(condominio_id), solo_propietarios_activos=True
+            ) or []
+        if not props_any:
+            cache[key] = ("", "sin_propietario")
+        else:
+            cache[key] = ("", "sin_unidad")
+        return cache[key]
+    except Exception:
+        cache[key] = ("", "")
+        return cache[key]
 
 
 def _texto_concepto_movimiento(mov: dict) -> str:
@@ -135,22 +142,53 @@ def observacion_y_explicacion_corta(mov: dict, sug: dict | None) -> tuple[str, s
     )
 
 
-def _fila_pendiente_tabla(mov: dict, sug: dict | None) -> list[str]:
+def _fila_pendiente_tabla(
+    mov: dict,
+    sug: dict | None,
+    *,
+    condominio_id: int | None = None,
+    client: Any | None = None,
+    apt_cache: dict[tuple[str, ...], tuple[str, str]] | None = None,
+) -> list[str]:
     fecha = str(mov.get("fecha") or "")[:10]
     ref = str(mov.get("referencia") or "").strip() or "—"
     monto = f"{float(mov.get('monto_bs') or 0):,.2f}"
     desc = str(mov.get("descripcion") or "")
     ceds = extraer_cedulas(desc)
     ced_txt = ", ".join(ceds) if ceds else "—"
+    estado_ced = ""
     if ceds:
-        apt_bd = (mov.get("_apartamento_desde_cedula") or "").strip()
-        apt_mov = _apartamento_mov(mov)
-        apt_txt = apt_bd or (apt_mov if apt_mov != "—" else "—")
+        apt_txt = ""
+        if client is not None and condominio_id is not None and apt_cache is not None:
+            apt_txt, estado_ced = _lookup_apartamentos_y_estado_cedula(
+                client, condominio_id, ceds, apt_cache
+            )
+        if not apt_txt:
+            apt_txt = (mov.get("_apartamento_desde_cedula") or "").strip()
+        if not apt_txt:
+            apt_mov = _apartamento_mov(mov)
+            apt_txt = apt_mov if apt_mov != "—" else "—"
     else:
         apt_txt = "—"
     obs, expl_std = observacion_y_explicacion_corta(mov, sug)
     if ceds:
-        expl = expl_std
+        tiene_apto = bool(apt_txt and apt_txt != "—")
+        if tiene_apto:
+            expl = expl_std
+        elif estado_ced == "sin_propietario":
+            expl = (
+                "Validación: la cédula del movimiento no está registrada como "
+                "propietario en este condominio. Cree o actualice el propietario "
+                "antes de registrar el cobro en Pagos."
+            )
+        elif estado_ced == "sin_unidad":
+            expl = (
+                "Validación: el propietario existe pero no tiene unidad activa "
+                "vinculada. Revise Unidades / Propietarios y asigne la unidad "
+                "correcta antes de registrar el pago."
+            )
+        else:
+            expl = expl_std
     else:
         expl = _texto_concepto_movimiento(mov)
     return [
@@ -214,6 +252,9 @@ def generar_pdf_sin_conciliar(
     periodo_etiqueta: str,
     pendientes: list[dict],
     pagos_periodo: list[dict],
+    *,
+    condominio_id: int | None = None,
+    client: Any | None = None,
 ) -> bytes:
     buf = io.BytesIO()
     doc = SimpleDocTemplate(
@@ -255,9 +296,19 @@ def generar_pdf_sin_conciliar(
         pendientes,
         key=lambda r: (str(r.get("fecha") or ""), int(r["id"])),
     )
+    apt_cache: dict[tuple[str, ...], tuple[str, str]] = {}
+    use_apto = client is not None and condominio_id is not None
     for mov in ordenados:
         sug = sugerir_vinculacion_desde_filas(mov, pagos_periodo)
-        data.append(_fila_pendiente_tabla(mov, sug))
+        data.append(
+            _fila_pendiente_tabla(
+                mov,
+                sug,
+                condominio_id=condominio_id if use_apto else None,
+                client=client if use_apto else None,
+                apt_cache=apt_cache if use_apto else None,
+            )
+        )
 
     story: list = [
         Paragraph("<b>Movimientos bancarios sin conciliar</b>", tit),

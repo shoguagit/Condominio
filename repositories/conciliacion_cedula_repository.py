@@ -62,7 +62,7 @@ def _cedula_coincide_lista(cedulas_banco: list[str], cedula_db: str | None) -> b
     return False
 
 
-def buscar_unidades_por_cedula_core(
+def propietarios_coincidentes_cedula_core(
     client: Client,
     cedulas: list[str],
     condominio_id: int,
@@ -70,10 +70,8 @@ def buscar_unidades_por_cedula_core(
     solo_propietarios_activos: bool = True,
 ) -> list[dict]:
     """
-    Unidades vinculadas a propietarios cuya cédula coincide (sin decorador).
-
-    Si solo_propietarios_activos es False, también considera propietarios inactivos
-    (útil en informes PDF cuando la cédula del banco no enlaza solo por ese filtro).
+    Propietarios del condominio cuya cédula coincide con las dadas (misma lógica
+    que la primera fase de buscar_unidades_por_cedula_core).
     """
     if not cedulas:
         return []
@@ -105,6 +103,32 @@ def buscar_unidades_por_cedula_core(
         props = [
             p for p in all_p if _cedula_coincide_lista(cedulas, p.get("cedula"))
         ]
+
+    return props
+
+
+def buscar_unidades_por_cedula_core(
+    client: Client,
+    cedulas: list[str],
+    condominio_id: int,
+    *,
+    solo_propietarios_activos: bool = True,
+) -> list[dict]:
+    """
+    Unidades vinculadas a propietarios cuya cédula coincide (sin decorador).
+
+    Si solo_propietarios_activos es False, también considera propietarios inactivos
+    (útil en informes PDF cuando la cédula del banco no enlaza solo por ese filtro).
+    """
+    if not cedulas:
+        return []
+
+    props = propietarios_coincidentes_cedula_core(
+        client,
+        cedulas,
+        condominio_id,
+        solo_propietarios_activos=solo_propietarios_activos,
+    )
 
     if not props:
         return []
