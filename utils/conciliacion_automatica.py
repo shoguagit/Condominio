@@ -13,6 +13,7 @@ from utils.indiviso_cuota import cuota_bs_desde_presupuesto
 from utils.tasa_bcv_resolver import resolver_tasa_para_fecha
 from utils.sincronizar_estado_pago_unidad import sincronizar_estado_pago_unidad
 from utils.supabase_compat import json_safe_periodo
+from utils.asignacion_movimientos_cuotas import mejor_asignacion_montos_a_cuotas
 
 logger = logging.getLogger(__name__)
 
@@ -87,6 +88,8 @@ def procesar_conciliacion_automatica(
     movimiento: dict,
     condominio_id: int,
     periodo: str,
+    *,
+    unidades_precargadas: list[dict] | None = None,
 ) -> dict:
     """
     Proceso completo para un movimiento bancario.
@@ -158,8 +161,15 @@ def procesar_conciliacion_automatica(
                 "motivo_omision": "sin_cedula",
             }
 
-        unidades = repo.buscar_unidades_por_cedula(cedulas, int(condominio_id))
-        logger.warning("CONC_AUTO: unidades encontradas: %s", unidades)
+        if unidades_precargadas is not None:
+            unidades = list(unidades_precargadas)
+            logger.warning(
+                "CONC_AUTO: usando %s unidad(es) precargada(s) (asignación por lote)",
+                len(unidades),
+            )
+        else:
+            unidades = repo.buscar_unidades_por_cedula(cedulas, int(condominio_id))
+            logger.warning("CONC_AUTO: unidades encontradas: %s", unidades)
         if not unidades:
             logger.warning("CONC_AUTO: omitido por: sin_coincidencia")
             return {
@@ -193,9 +203,10 @@ def procesar_conciliacion_automatica(
         pres_row = fetch_presupuesto_si_existe(client, int(condominio_id), periodo_db)
         pres_bs = float((pres_row or {}).get("monto_bs") or 0)
 
-        unidades = _elegir_unidad_por_proximidad_cuota(
-            repo, unidades, monto_bs, periodo_db, pres_bs
-        )
+        if unidades_precargadas is None:
+            unidades = _elegir_unidad_por_proximidad_cuota(
+                repo, unidades, monto_bs, periodo_db, pres_bs
+            )
 
         pagos_nuevos = 0
         first_pago_id: int | None = None
@@ -252,5 +263,135 @@ def procesar_conciliacion_automatica(
         logger.warning("CONC_AUTO: omitido por: error_interno", exc_info=True)
         return {
             **vacio,
+            "motivo_omision": "error_interno",
+        }
+
+
+def procesar_grupo_movimientos_misma_cedula(
+    movimientos: list[dict],
+    condominio_id: int,
+    periodo: str,
+) -> dict:
+    """
+    Varios ingresos del mismo período con la misma cédula en la descripción:
+    asigna cada movimiento a **una unidad distinta** cuando hay varias unidades,
+    minimizando en conjunto sum |monto − cuota| (no cada movimiento por separado).
+    """
+    vacio_agg = {
+        "procesado": False,
+        "cedulas_encontradas": [],
+        "unidades_vinculadas": [],
+        "pagos_registrados": 0,
+        "movimientos_con_pago": 0,
+        "tipo_pago": "",
+        "motivo_omision": None,
+    }
+    try:
+        if not movimientos:
+            return {**vacio_agg, "motivo_omision": "sin_movimientos"}
+
+        client = get_supabase_client()
+        repo = ConciliacionCedulaRepository(client)
+
+        pend: list[dict] = []
+        for m in movimientos:
+            mid = m.get("id")
+            if mid is None:
+                continue
+            if repo.movimiento_ya_conciliado(int(mid)):
+                continue
+            pend.append(m)
+
+        if not pend:
+            return {**vacio_agg, "motivo_omision": "ya_conciliados"}
+
+        if len(pend) == 1:
+            m0 = pend[0]
+            movimiento_dict = {
+                "id": int(m0["id"]),
+                "descripcion": m0.get("descripcion") or "",
+                "monto_bs": float(m0.get("monto_bs") or 0),
+                "tipo": "ingreso",
+                "referencia": m0.get("referencia") or "",
+                "fecha": str(m0.get("fecha") or "")[:10],
+            }
+            return procesar_conciliacion_automatica(
+                movimiento_dict, condominio_id, periodo
+            )
+
+        texto0 = str(pend[0].get("descripcion") or "")
+        cedulas = extraer_cedulas(texto0)
+        if not cedulas:
+            return {**vacio_agg, "motivo_omision": "sin_cedula"}
+
+        unidades = repo.buscar_unidades_por_cedula(cedulas, int(condominio_id))
+        if not unidades:
+            return {
+                **vacio_agg,
+                "cedulas_encontradas": cedulas,
+                "motivo_omision": "sin_coincidencia",
+            }
+
+        periodo_db = _periodo_fecha_db(periodo)
+        pres_row = fetch_presupuesto_si_existe(client, int(condominio_id), periodo_db)
+        pres_bs = float((pres_row or {}).get("monto_bs") or 0)
+
+        cuotas = [
+            _cuota_referencia_unidad(repo, u, periodo_db, pres_bs) for u in unidades
+        ]
+        montos = [float(m.get("monto_bs") or 0) for m in pend]
+
+        assign_j = mejor_asignacion_montos_a_cuotas(montos, cuotas)
+        logger.warning(
+            "CONC_AUTO lote: %s mov., %s und.; índices unidad asignados %s cuotas=%s montos=%s",
+            len(pend),
+            len(unidades),
+            assign_j,
+            [round(c, 2) for c in cuotas],
+            [round(x, 2) for x in montos],
+        )
+
+        total_pagos = 0
+        movs_ok = 0
+        last_tipo = ""
+        all_uv: list[dict] = []
+
+        for i, m in enumerate(pend):
+            u_pick = unidades[int(assign_j[i]) % len(unidades)]
+            movimiento_dict = {
+                "id": int(m["id"]),
+                "descripcion": m.get("descripcion") or "",
+                "monto_bs": float(m.get("monto_bs") or 0),
+                "tipo": "ingreso",
+                "referencia": m.get("referencia") or "",
+                "fecha": str(m.get("fecha") or "")[:10],
+            }
+            res = procesar_conciliacion_automatica(
+                movimiento_dict,
+                condominio_id,
+                periodo,
+                unidades_precargadas=[u_pick],
+            )
+            pr = int(res.get("pagos_registrados") or 0)
+            total_pagos += pr
+            if pr > 0:
+                movs_ok += 1
+            if res.get("tipo_pago"):
+                last_tipo = str(res.get("tipo_pago"))
+            all_uv.extend(res.get("unidades_vinculadas") or [])
+
+        return {
+            "procesado": total_pagos > 0,
+            "cedulas_encontradas": cedulas,
+            "unidades_vinculadas": all_uv,
+            "pagos_registrados": total_pagos,
+            "movimientos_con_pago": movs_ok,
+            "tipo_pago": last_tipo,
+            "motivo_omision": None if total_pagos > 0 else "sin_pago_nuevo",
+        }
+    except Exception:
+        logger.warning("CONC_AUTO lote: error_interno", exc_info=True)
+        return {
+            **vacio_agg,
             "motivo_omision": "error_interno",
         }

@@ -1,4 +1,4 @@
-from collections import Counter
+from collections import Counter, defaultdict
 import hashlib
 import re
 
@@ -22,7 +22,10 @@ from utils.auth import check_authentication, require_condominio
 from utils.bank_parser import MovimientoParsed, es_duplicado, parsear_bytes
 from utils.conciliacion import clasificar_alerta
 from utils.conciliacion_match import sugerir_vinculacion_desde_filas
-from utils.conciliacion_automatica import procesar_conciliacion_automatica
+from utils.conciliacion_automatica import (
+    procesar_conciliacion_automatica,
+    procesar_grupo_movimientos_misma_cedula,
+)
 from utils.cedula_extractor import extraer_cedulas
 from utils.error_handler import DatabaseError
 from utils.supabase_compat import json_safe_date, json_safe_periodo
@@ -1025,10 +1028,50 @@ with tab_conciliacion:
                     periodo_ym_ced = periodo_db_conc[:7]
                     movs_con_pago = 0
                     total_pagos = 0
+                    por_clave: dict[tuple[str, ...], list[dict]] = defaultdict(list)
+                    sin_cedula_en_desc: list[dict] = []
+                    for r in candidatos:
+                        clave = tuple(
+                            sorted(set(extraer_cedulas(str(r.get("descripcion") or ""))))
+                        )
+                        if not clave:
+                            sin_cedula_en_desc.append(r)
+                        else:
+                            por_clave[clave].append(r)
+
                     with st.spinner(
                         f"Procesando {len(candidatos)} ingreso(s) por cédula en descripción…"
                     ):
-                        for r in candidatos:
+                        for _clave, grupo in por_clave.items():
+                            if len(grupo) >= 2:
+                                res = procesar_grupo_movimientos_misma_cedula(
+                                    grupo,
+                                    condominio_id=int(condominio_id),
+                                    periodo=periodo_ym_ced,
+                                )
+                                tp = int(res.get("pagos_registrados") or 0)
+                                total_pagos += tp
+                                movs_con_pago += int(res.get("movimientos_con_pago") or 0)
+                            else:
+                                r = grupo[0]
+                                movimiento_dict = {
+                                    "id": int(r["id"]),
+                                    "descripcion": r.get("descripcion") or "",
+                                    "monto_bs": float(r.get("monto_bs") or 0),
+                                    "tipo": "ingreso",
+                                    "referencia": r.get("referencia") or "",
+                                    "fecha": str(r.get("fecha") or "")[:10],
+                                }
+                                res = procesar_conciliacion_automatica(
+                                    movimiento=movimiento_dict,
+                                    condominio_id=int(condominio_id),
+                                    periodo=periodo_ym_ced,
+                                )
+                                pr = int(res.get("pagos_registrados") or 0)
+                                if pr > 0:
+                                    total_pagos += pr
+                                    movs_con_pago += 1
+                        for r in sin_cedula_en_desc:
                             movimiento_dict = {
                                 "id": int(r["id"]),
                                 "descripcion": r.get("descripcion") or "",
@@ -1050,7 +1093,8 @@ with tab_conciliacion:
                         st.success(
                             f"✅ **{movs_con_pago}** movimiento(s) conciliado(s) con pago(s) "
                             f"automático(s); **{total_pagos}** registro(s) en **Pagos** en total "
-                            f"(una cédula en varias unidades genera un pago por unidad)."
+                            f"(varias unidades por cédula: un pago por movimiento, "
+                            f"unidad según mejor reparto por cuota)."
                         )
                         st.rerun()
                     else:
