@@ -27,14 +27,9 @@ class MovimientoRepository:
         periodo: str,
         tipo: str,
         estado: str | None = None,
-        *,
-        with_propietario_embed: bool = True,
     ) -> list[dict]:
-        base = "*, conceptos(nombre), unidades(id, codigo, numero)"
         sel = (
-            f"{base}, propietarios(id, nombre)"
-            if with_propietario_embed
-            else base
+            "*, conceptos(nombre), unidades(id, codigo, numero), propietarios(id, nombre)"
         )
         query = (
             self.client.table(self.table)
@@ -47,6 +42,24 @@ class MovimientoRepository:
         if estado:
             query = query.eq("estado", estado)
         return query.execute().data
+
+    @safe_db_operation("movimiento.get_ingresos_conciliacion")
+    def get_ingresos_conciliacion(self, condominio_id: int, periodo: str) -> list[dict]:
+        """
+        Ingresos del período para la pestaña Conciliación: mismo núcleo que get_by_tipo
+        pero sin embed de propietarios (menos joins). Si PostgREST rechaza la forma corta,
+        la página usa get_by_tipo como respaldo.
+        """
+        rows = (
+            self.client.table(self.table)
+            .select("*, conceptos(nombre), unidades(codigo, numero)")
+            .eq("condominio_id", condominio_id)
+            .eq("periodo", periodo)
+            .eq("tipo", "ingreso")
+            .order("fecha", desc=True)
+            .execute()
+        ).data
+        return rows or []
 
     @safe_db_operation("movimiento.sum_egresos_periodo")
     def sum_egresos_periodo(self, condominio_id: int, periodo: str) -> float:

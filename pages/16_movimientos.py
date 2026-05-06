@@ -110,7 +110,7 @@ condominio_id = require_condominio()
 
 # Bump cuando cambie la firma/lógica de los repos; si no, Streamlit puede seguir
 # usando instancias cacheadas viejas (p. ej. métodos con @safe_db_operation obsoleto).
-_REPOS_CACHE_KEY = 9
+_REPOS_CACHE_KEY = 10
 
 
 @st.cache_resource
@@ -820,14 +820,17 @@ with tab_conciliacion:
             pagos_reporte = []
         ing_all: list[dict] = []
         try:
-            ing_all = repo_mov.get_by_tipo(
-                condominio_id,
-                periodo_db_conc,
-                "ingreso",
-                with_propietario_embed=False,
+            ing_all = repo_mov.get_ingresos_conciliacion(
+                condominio_id, periodo_db_conc
             )
-        except DatabaseError as e:
-            st.error(f"❌ Cargando movimientos del período: {e}")
+        except DatabaseError:
+            try:
+                ing_all = repo_mov.get_by_tipo(
+                    condominio_id, periodo_db_conc, "ingreso"
+                )
+            except DatabaseError as e:
+                st.error(f"❌ Cargando movimientos del período: {e}")
+                ing_all = []
 
         estado = compute_estado_periodo_desde_datos(ing_all, pagos_reporte)
 
@@ -993,12 +996,14 @@ with tab_conciliacion:
                 key="btn_conciliar_cedula_movimientos_existentes",
             ):
                 try:
-                    ing_cedula = repo_mov.get_by_tipo(
-                        condominio_id,
-                        periodo_db_conc,
-                        "ingreso",
-                        with_propietario_embed=False,
-                    )
+                    try:
+                        ing_cedula = repo_mov.get_ingresos_conciliacion(
+                            condominio_id, periodo_db_conc
+                        )
+                    except DatabaseError:
+                        ing_cedula = repo_mov.get_by_tipo(
+                            condominio_id, periodo_db_conc, "ingreso"
+                        )
                 except DatabaseError as e:
                     st.error(f"❌ {e}")
                     ing_cedula = []
