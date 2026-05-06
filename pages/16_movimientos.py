@@ -67,6 +67,24 @@ def _fingerprint_conciliacion_pdfs(
     return hashlib.sha256(f"{sm}#{sp}".encode()).hexdigest()
 
 
+def _ingresos_periodo_conciliacion(
+    repo_mov, condominio_id: int, periodo_db: str
+) -> list[dict]:
+    """
+    Ingresos del período para la pestaña Conciliación. Usa get_ingresos_conciliacion
+    si el repositorio lo define; si no (caché @st.cache_resource o deploy parcial),
+    get_by_tipo. Si la ruta ligera falla en BD, reintenta con get_by_tipo.
+    """
+    fn = getattr(repo_mov, "get_ingresos_conciliacion", None)
+    if callable(fn):
+        try:
+            out = fn(condominio_id, periodo_db)
+            return list(out) if out else []
+        except DatabaseError:
+            pass
+    return repo_mov.get_by_tipo(condominio_id, periodo_db, "ingreso")
+
+
 def mes_proceso_a_mmyyyy_default(raw: str) -> str:
     """Valor inicial del selector: mes_proceso suele ser YYYY-MM-01 → MM/YYYY."""
     s = str(raw or "").strip()
@@ -110,7 +128,7 @@ condominio_id = require_condominio()
 
 # Bump cuando cambie la firma/lógica de los repos; si no, Streamlit puede seguir
 # usando instancias cacheadas viejas (p. ej. métodos con @safe_db_operation obsoleto).
-_REPOS_CACHE_KEY = 10
+_REPOS_CACHE_KEY = 11
 
 
 @st.cache_resource
@@ -820,17 +838,12 @@ with tab_conciliacion:
             pagos_reporte = []
         ing_all: list[dict] = []
         try:
-            ing_all = repo_mov.get_ingresos_conciliacion(
-                condominio_id, periodo_db_conc
+            ing_all = _ingresos_periodo_conciliacion(
+                repo_mov, condominio_id, periodo_db_conc
             )
-        except DatabaseError:
-            try:
-                ing_all = repo_mov.get_by_tipo(
-                    condominio_id, periodo_db_conc, "ingreso"
-                )
-            except DatabaseError as e:
-                st.error(f"❌ Cargando movimientos del período: {e}")
-                ing_all = []
+        except DatabaseError as e:
+            st.error(f"❌ Cargando movimientos del período: {e}")
+            ing_all = []
 
         estado = compute_estado_periodo_desde_datos(ing_all, pagos_reporte)
 
@@ -996,14 +1009,9 @@ with tab_conciliacion:
                 key="btn_conciliar_cedula_movimientos_existentes",
             ):
                 try:
-                    try:
-                        ing_cedula = repo_mov.get_ingresos_conciliacion(
-                            condominio_id, periodo_db_conc
-                        )
-                    except DatabaseError:
-                        ing_cedula = repo_mov.get_by_tipo(
-                            condominio_id, periodo_db_conc, "ingreso"
-                        )
+                    ing_cedula = _ingresos_periodo_conciliacion(
+                        repo_mov, condominio_id, periodo_db_conc
+                    )
                 except DatabaseError as e:
                     st.error(f"❌ {e}")
                     ing_cedula = []
