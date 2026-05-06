@@ -190,7 +190,7 @@ def buscar_unidades_por_cedula_core(
         part = ulist[i : i + chunk]
         batch = (
             client.table("unidades")
-            .select("id, codigo, numero, saldo")
+            .select("id, codigo, numero, saldo, indiviso_pct")
             .in_("id", part)
             .execute()
         ).data or []
@@ -213,6 +213,7 @@ def buscar_unidades_por_cedula_core(
                 "cedula_encontrada": str(prop.get("cedula") or ""),
                 "cuota_bs": 0.0,
                 "saldo_bs": float(u.get("saldo") or 0),
+                "indiviso_pct": float(u.get("indiviso_pct") or 0),
                 "propietario_id": pid,
             }
         )

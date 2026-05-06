@@ -7,12 +7,73 @@ from datetime import date
 
 from config.supabase_client import get_supabase_client
 from repositories.conciliacion_cedula_repository import ConciliacionCedulaRepository
+from repositories.presupuesto_repository import fetch_presupuesto_si_existe
 from utils.cedula_extractor import clasificar_pago, extraer_cedulas
+from utils.indiviso_cuota import cuota_bs_desde_presupuesto
 from utils.tasa_bcv_resolver import resolver_tasa_para_fecha
 from utils.sincronizar_estado_pago_unidad import sincronizar_estado_pago_unidad
 from utils.supabase_compat import json_safe_periodo
 
 logger = logging.getLogger(__name__)
+
+
+def _cuota_referencia_unidad(
+    repo: ConciliacionCedulaRepository,
+    u: dict,
+    periodo_db: str,
+    presupuesto_bs: float,
+) -> float:
+    """
+    Cuota esperada del período: cuotas_unidad.cuota_calculada_bs si existe;
+    si no, presupuesto del mes × indiviso % de la unidad.
+    """
+    uid = int(u["unidad_id"])
+    c = repo.obtener_cuota_unidad(uid, periodo_db)
+    if c > 0:
+        return float(c)
+    pct = float(u.get("indiviso_pct") or 0)
+    if presupuesto_bs > 0 and pct > 0:
+        return float(cuota_bs_desde_presupuesto(presupuesto_bs, pct))
+    return 0.0
+
+
+def _elegir_unidad_por_proximidad_cuota(
+    repo: ConciliacionCedulaRepository,
+    unidades: list[dict],
+    monto_bs: float,
+    periodo_db: str,
+    presupuesto_bs: float,
+) -> list[dict]:
+    """
+    Si hay varias unidades para la misma cédula, elige la que minimiza
+    |monto_banco − cuota_esperada| (cuota del período o derivada por indiviso).
+    Empata por código de unidad.
+    """
+    if len(unidades) <= 1:
+        return unidades
+    scored: list[tuple[float, float, dict]] = []
+    for u in unidades:
+        cref = _cuota_referencia_unidad(repo, u, periodo_db, presupuesto_bs)
+        diff = abs(float(monto_bs) - cref) if cref > 0 else float("inf")
+        scored.append((diff, cref, u))
+    scored.sort(key=lambda x: (x[0], (x[2].get("codigo_unidad") or "").upper()))
+    best_diff, best_cref, best_u = scored[0]
+    if best_diff < float("inf"):
+        logger.warning(
+            "CONC_AUTO: %s unidades para la misma cédula; se asigna %s "
+            "(cuota_ref≈%.2f Bs., |monto−cuota|=%.2f)",
+            len(unidades),
+            best_u.get("codigo_unidad"),
+            float(best_cref),
+            float(best_diff),
+        )
+    else:
+        logger.warning(
+            "CONC_AUTO: %s unidades sin cuota de referencia; se asigna %s (orden por código)",
+            len(unidades),
+            best_u.get("codigo_unidad"),
+        )
+    return [best_u]
 
 
 def _periodo_fecha_db(periodo: str) -> str:
@@ -129,6 +190,13 @@ def procesar_conciliacion_automatica(
         if tasa_pago <= 0:
             tasa_pago = 1.0
 
+        pres_row = fetch_presupuesto_si_existe(client, int(condominio_id), periodo_db)
+        pres_bs = float((pres_row or {}).get("monto_bs") or 0)
+
+        unidades = _elegir_unidad_por_proximidad_cuota(
+            repo, unidades, monto_bs, periodo_db, pres_bs
+        )
+
         pagos_nuevos = 0
         first_pago_id: int | None = None
         last_tipo = "total"
@@ -136,7 +204,7 @@ def procesar_conciliacion_automatica(
 
         for u in unidades:
             uid = int(u["unidad_id"])
-            cuota = repo.obtener_cuota_unidad(uid, periodo_db)
+            cuota = _cuota_referencia_unidad(repo, u, periodo_db, pres_bs)
             tipo = clasificar_pago(monto_bs, cuota)
             last_tipo = tipo
             u_out = {k: v for k, v in u.items() if not str(k).startswith("_")}
