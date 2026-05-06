@@ -1,4 +1,5 @@
 from collections import Counter, defaultdict
+from datetime import date
 import hashlib
 import re
 
@@ -420,6 +421,7 @@ with tab_carga:
             conciliados_auto = 0
             cid = int(condominio_id)
             periodo_ym_imp = periodo_import_db[:7]
+            nuevos_ingresos_para_cedula: list[dict] = []
             try:
                 raw_ex = repo_mov.get_all(condominio_id, periodo_import_db)
             except DatabaseError:
@@ -456,45 +458,132 @@ with tab_carga:
                     }
                 )
                 if m.es_ingreso:
-                    movimiento_dict = {
-                        "id": int(created["id"]),
-                        "descripcion": m.concepto,
-                        "monto_bs": float(m.monto),
-                        "tipo": "ingreso",
-                        "referencia": m.referencia,
-                        "fecha": str(m.fecha),
-                    }
+                    nuevos_ingresos_para_cedula.append(
+                        {
+                            "id": int(created["id"]),
+                            "descripcion": str(m.concepto or ""),
+                            "monto_bs": float(m.monto),
+                            "tipo": "ingreso",
+                            "referencia": str(m.referencia or ""),
+                            "fecha": str(m.fecha)[:10]
+                            if m.fecha is not None
+                            else "",
+                            "_fecha_alerta": m.fecha,
+                        }
+                    )
+
+            # Misma lógica que el botón de Conciliación: agrupa por cédula en el lote para
+            # no cargar cada fila contra la misma unidad cuando hay varias.
+            por_clav_ex: dict[tuple[str, ...], list[dict]] = defaultdict(list)
+            sin_cedula_ex: list[dict] = []
+            for md in nuevos_ingresos_para_cedula:
+                ck_ex = tuple(
+                    sorted(set(extraer_cedulas(str(md.get("descripcion") or ""))))
+                )
+                if not ck_ex:
+                    sin_cedula_ex.append(md)
+                else:
+                    por_clav_ex[ck_ex].append(md)
+
+            def _fecha_alerta_mov(gmd: dict) -> date:
+                fa = gmd.get("_fecha_alerta")
+                if isinstance(fa, date):
+                    return fa
+                s = str(gmd.get("fecha") or "").strip()
+                if len(s) >= 10:
+                    try:
+                        return date.fromisoformat(s[:10])
+                    except ValueError:
+                        pass
+                return date.today()
+
+            def _corregir_alerta_pendiente(mid: int, mb: float, fecha_mov_alert: date) -> None:
+                try:
+                    sug = repo_conciliacion.sugerir_vinculacion(
+                        mid, condominio_id, periodo_import_db
+                    )
+                    ms = (
+                        float(sug["pago"]["monto_bs"])
+                        if sug and sug.get("pago")
+                        else 0.0
+                    )
+                    tipo_a = clasificar_alerta(
+                        mb,
+                        ms,
+                        fecha_mov_alert,
+                        periodo_ym_imp,
+                    )
+                    repo_mov.update(mid, {"tipo_alerta": tipo_a})
+                except DatabaseError:
+                    pass
+
+            for _ck_ex, grupo_ex in por_clav_ex.items():
+                if len(grupo_ex) >= 2:
+                    res_g = procesar_grupo_movimientos_misma_cedula(
+                        grupo_ex,
+                        cid,
+                        periodo_ym_imp,
+                    )
+                    conciliados_auto += int(res_g.get("pagos_registrados") or 0)
+                    for gd in grupo_ex:
+                        chk = (
+                            repo_mov.client.table("movimientos")
+                            .select("conciliado")
+                            .eq("id", int(gd["id"]))
+                            .limit(1)
+                            .execute()
+                        ).data or []
+                        if chk and not chk[0].get("conciliado"):
+                            _corregir_alerta_pendiente(
+                                int(gd["id"]),
+                                float(gd.get("monto_bs") or 0),
+                                _fecha_alerta_mov(gd),
+                            )
+                else:
+                    g0 = grupo_ex[0]
                     resultado_conc = procesar_conciliacion_automatica(
-                        movimiento=movimiento_dict,
+                        movimiento={
+                            "id": int(g0["id"]),
+                            "descripcion": g0.get("descripcion") or "",
+                            "monto_bs": float(g0.get("monto_bs") or 0),
+                            "tipo": "ingreso",
+                            "referencia": g0.get("referencia") or "",
+                            "fecha": str(g0.get("fecha") or "")[:10],
+                        },
                         condominio_id=cid,
-                        periodo=periodo_import_db[:7],
+                        periodo=periodo_ym_imp,
                     )
                     if resultado_conc.get("pagos_registrados", 0) > 0:
                         conciliados_auto += resultado_conc["pagos_registrados"]
                     if not resultado_conc.get("procesado"):
-                        try:
-                            sug = repo_conciliacion.sugerir_vinculacion(
-                                int(created["id"]),
-                                condominio_id,
-                                periodo_import_db,
-                            )
-                            ms = (
-                                float(sug["pago"]["monto_bs"])
-                                if sug and sug.get("pago")
-                                else 0.0
-                            )
-                            tipo_a = clasificar_alerta(
-                                float(created.get("monto_bs") or 0),
-                                ms,
-                                m.fecha,
-                                periodo_ym_imp,
-                            )
-                            repo_mov.update(
-                                int(created["id"]),
-                                {"tipo_alerta": tipo_a},
-                            )
-                        except DatabaseError:
-                            pass
+                        _corregir_alerta_pendiente(
+                            int(g0["id"]),
+                            float(g0.get("monto_bs") or 0),
+                            _fecha_alerta_mov(g0),
+                        )
+
+            for sd in sin_cedula_ex:
+                resultado_conc = procesar_conciliacion_automatica(
+                    movimiento={
+                        "id": int(sd["id"]),
+                        "descripcion": sd.get("descripcion") or "",
+                        "monto_bs": float(sd.get("monto_bs") or 0),
+                        "tipo": "ingreso",
+                        "referencia": sd.get("referencia") or "",
+                        "fecha": str(sd.get("fecha") or "")[:10],
+                    },
+                    condominio_id=cid,
+                    periodo=periodo_ym_imp,
+                )
+                if resultado_conc.get("pagos_registrados", 0) > 0:
+                    conciliados_auto += resultado_conc["pagos_registrados"]
+                if not resultado_conc.get("procesado"):
+                    _corregir_alerta_pendiente(
+                        int(sd["id"]),
+                        float(sd.get("monto_bs") or 0),
+                        _fecha_alerta_mov(sd),
+                    )
+
             return inserted, skipped, conciliados_auto
 
         step = st.session_state.upload_step
