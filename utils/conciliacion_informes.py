@@ -35,13 +35,12 @@ def enriquecer_apartamentos_desde_cedula_bd(
     Para cada movimiento con cédula en la descripción, busca apartamento(s) en BD
     con la misma lógica que la conciliación por cédula.
 
-    Usa un repositorio nuevo con el cliente Supabase (no la instancia cacheada de
-    Streamlit), y una consulta por combinación de cédulas para evitar fallos del
-    filtrado por lote.
+    Usa ``buscar_unidades_por_cedula_core`` (sin decorador que oculte errores) y
+    amplía la búsqueda a propietarios inactivos si hace falta, igual criterio
+    propietario→unidad que en conciliación por cédula.
     """
-    from repositories.conciliacion_cedula_repository import ConciliacionCedulaRepository
+    from repositories.conciliacion_cedula_repository import buscar_unidades_por_cedula_core
 
-    repo_tmp = ConciliacionCedulaRepository(client)
     cache: dict[tuple[str, ...], list[dict]] = {}
     for m in pendientes:
         mc = extraer_cedulas(str(m.get("descripcion") or ""))
@@ -50,9 +49,20 @@ def enriquecer_apartamentos_desde_cedula_bd(
         key = tuple(sorted(set(mc)))
         if key not in cache:
             try:
-                cache[key] = repo_tmp.buscar_unidades_por_cedula(
-                    list(key), int(condominio_id)
-                ) or []
+                filas = buscar_unidades_por_cedula_core(
+                    client,
+                    list(key),
+                    int(condominio_id),
+                    solo_propietarios_activos=False,
+                )
+                if not filas:
+                    filas = buscar_unidades_por_cedula_core(
+                        client,
+                        list(key),
+                        int(condominio_id),
+                        solo_propietarios_activos=True,
+                    )
+                cache[key] = filas or []
             except Exception:
                 cache[key] = []
         filas = cache[key]
