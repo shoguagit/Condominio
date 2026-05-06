@@ -1,4 +1,5 @@
 from collections import Counter
+import hashlib
 import re
 
 import pandas as pd
@@ -9,13 +10,18 @@ from repositories.movimiento_repository import MovimientoRepository
 from repositories.concepto_repository import ConceptoRepository
 from repositories.unidad_repository import UnidadRepository
 from repositories.propietario_repository import PropietarioRepository
-from repositories.conciliacion_repository import ConciliacionRepository, query_pagos_por_ids
+from repositories.conciliacion_repository import (
+    ConciliacionRepository,
+    compute_estado_periodo_desde_datos,
+    query_pagos_por_ids,
+)
 from repositories.conciliacion_cedula_repository import ConciliacionCedulaRepository
 from components.header import render_header
 from components.breadcrumb import render_breadcrumb
 from utils.auth import check_authentication, require_condominio
 from utils.bank_parser import MovimientoParsed, es_duplicado, parsear_bytes
 from utils.conciliacion import clasificar_alerta
+from utils.conciliacion_match import sugerir_vinculacion_desde_filas
 from utils.conciliacion_automatica import procesar_conciliacion_automatica
 from utils.cedula_extractor import extraer_cedulas
 from utils.error_handler import DatabaseError
@@ -43,6 +49,22 @@ def convertir_periodo(periodo_mmyyyy: str) -> str:
         return f"{yyyy}-{mm}"
     except Exception:
         return ""
+
+
+def _fingerprint_conciliacion_pdfs(
+    ing_all: list[dict], pagos_reporte: list[dict]
+) -> str:
+    """Cambia si movimientos/pagos del período cambian (invalida PDFs en sesión)."""
+    sm = "|".join(
+        f'{int(r["id"])}:{int(bool(r.get("conciliado")))}:'
+        f'{hash(str(r.get("descripcion") or ""))}'
+        for r in sorted(ing_all, key=lambda x: int(x["id"]))
+    )
+    sp = "|".join(
+        f'{int(r["id"])}:{float(r.get("monto_bs") or 0)}'
+        for r in sorted(pagos_reporte, key=lambda x: int(x["id"]))
+    )
+    return hashlib.sha256(f"{sm}#{sp}".encode()).hexdigest()
 
 
 def mes_proceso_a_mmyyyy_default(raw: str) -> str:
@@ -88,7 +110,7 @@ condominio_id = require_condominio()
 
 # Bump cuando cambie la firma/lógica de los repos; si no, Streamlit puede seguir
 # usando instancias cacheadas viejas (p. ej. métodos con @safe_db_operation obsoleto).
-_REPOS_CACHE_KEY = 8
+_REPOS_CACHE_KEY = 9
 
 
 @st.cache_resource
@@ -790,15 +812,26 @@ with tab_conciliacion:
     else:
         periodo_db_conc = f"{periodo_ym_conc}-01"
 
-        st.subheader("Resumen del período")
-        estado = None
         try:
-            estado = repo_conciliacion.obtener_estado_periodo(
+            pagos_reporte = repo_conciliacion.obtener_pagos_periodo(
                 condominio_id, periodo_db_conc
             )
+        except DatabaseError:
+            pagos_reporte = []
+        ing_all: list[dict] = []
+        try:
+            ing_all = repo_mov.get_by_tipo(
+                condominio_id,
+                periodo_db_conc,
+                "ingreso",
+                with_propietario_embed=False,
+            )
         except DatabaseError as e:
-            st.error(f"❌ {e}")
+            st.error(f"❌ Cargando movimientos del período: {e}")
 
+        estado = compute_estado_periodo_desde_datos(ing_all, pagos_reporte)
+
+        st.subheader("Resumen del período")
         if estado is not None:
             c1, c2, c3, c4 = st.columns(4)
             with c1:
@@ -824,22 +857,9 @@ with tab_conciliacion:
             st.divider()
             st.subheader("📥 Reportes de conciliación")
             st.caption(
-                "Descargue PDF con movimientos pendientes (motivos y requisitos) y PDF de revisión "
-                "de los ya conciliados."
+                "Pulse **Preparar PDFs del período** para generarlos (evita bloquear la página en cada "
+                "recarga). Luego descargue cada archivo."
             )
-            try:
-                pagos_reporte = repo_conciliacion.obtener_pagos_periodo(
-                    condominio_id, periodo_db_conc
-                )
-            except DatabaseError:
-                pagos_reporte = []
-            try:
-                ing_all = repo_mov.get_by_tipo(
-                    condominio_id, periodo_db_conc, "ingreso"
-                )
-            except DatabaseError as e:
-                st.error(f"❌ Cargando movimientos para reportes: {e}")
-                ing_all = []
 
             pago_ids_pdf = [
                 int(r["pago_id"])
@@ -861,33 +881,59 @@ with tab_conciliacion:
             periodo_etiqueta = (
                 str(periodo_conc or "").strip() or periodo_ym_conc.replace("-", "/")
             )
-            pend_reporte = [r for r in ing_all if not r.get("conciliado")]
-            conc_reporte = []
-            for r in ing_all:
-                if not r.get("conciliado"):
-                    continue
-                m = dict(r)
-                pid = m.get("pago_id")
-                if pid is not None:
-                    p = pagos_por_id.get(int(pid))
-                    if p:
-                        m["pagos"] = p
-                conc_reporte.append(m)
+            _pdf_ns = f"conc_pdf_{int(condominio_id)}_{periodo_db_conc}"
+            _pdf_fp = _fingerprint_conciliacion_pdfs(ing_all, pagos_reporte)
+            if st.session_state.get(_pdf_ns + "_fp") != _pdf_fp:
+                st.session_state.pop(_pdf_ns + "_pend", None)
+                st.session_state.pop(_pdf_ns + "_conc", None)
+
+            def _armar_reportes_pdf() -> tuple[bytes, bytes]:
+                pend_r = [r for r in ing_all if not r.get("conciliado")]
+                conc_r = []
+                for r in ing_all:
+                    if not r.get("conciliado"):
+                        continue
+                    m = dict(r)
+                    pid = m.get("pago_id")
+                    if pid is not None:
+                        p = pagos_por_id.get(int(pid))
+                        if p:
+                            m["pagos"] = p
+                    conc_r.append(m)
+                pdf_n = generar_pdf_sin_conciliar(
+                    nombre_condo,
+                    periodo_etiqueta,
+                    pend_r,
+                    pagos_reporte,
+                    condominio_id=int(condominio_id),
+                    client=repo_mov.client,
+                )
+                pdf_s = generar_pdf_conciliados_revision(
+                    nombre_condo, periodo_etiqueta, conc_r
+                )
+                return pdf_n, pdf_s
+
+            if st.button(
+                "🔄 Preparar PDFs del período",
+                key="btn_prep_conc_pdfs",
+                type="secondary",
+                use_container_width=True,
+            ):
+                try:
+                    with st.spinner("Generando PDFs…"):
+                        b_no, b_si = _armar_reportes_pdf()
+                        st.session_state[_pdf_ns + "_pend"] = b_no
+                        st.session_state[_pdf_ns + "_conc"] = b_si
+                        st.session_state[_pdf_ns + "_fp"] = _pdf_fp
+                    st.success("PDFs listos para descargar.")
+                except Exception as ex:
+                    st.error(f"No se pudieron generar los PDFs: {ex}")
+
             rep_a, rep_b = st.columns(2)
             sufijo_fn = periodo_ym_conc.replace("-", "")
+            pdf_no = st.session_state.get(_pdf_ns + "_pend")
+            pdf_si = st.session_state.get(_pdf_ns + "_conc")
             with rep_a:
-                try:
-                    pdf_no = generar_pdf_sin_conciliar(
-                        nombre_condo,
-                        periodo_etiqueta,
-                        pend_reporte,
-                        pagos_reporte,
-                        condominio_id=int(condominio_id),
-                        client=repo_mov.client,
-                    )
-                except Exception as ex:
-                    pdf_no = b""
-                    st.caption(f"No se pudo armar el PDF de pendientes: {ex}")
                 if pdf_no:
                     st.download_button(
                         "📄 PDF — Sin conciliar (motivos)",
@@ -897,14 +943,9 @@ with tab_conciliacion:
                         key="dl_pdf_conc_pendientes",
                         use_container_width=True,
                     )
+                else:
+                    st.caption("Genere primero los PDFs con el botón superior.")
             with rep_b:
-                try:
-                    pdf_si = generar_pdf_conciliados_revision(
-                        nombre_condo, periodo_etiqueta, conc_reporte
-                    )
-                except Exception as ex:
-                    pdf_si = b""
-                    st.caption(f"No se pudo armar el PDF de conciliados: {ex}")
                 if pdf_si:
                     st.download_button(
                         "📄 PDF — Conciliados (revisión)",
@@ -914,6 +955,8 @@ with tab_conciliacion:
                         key="dl_pdf_conc_hechos",
                         use_container_width=True,
                     )
+                else:
+                    st.caption("Genere primero los PDFs con el botón superior.")
 
             st.divider()
             st.subheader("Alertas activas")
@@ -951,7 +994,10 @@ with tab_conciliacion:
             ):
                 try:
                     ing_cedula = repo_mov.get_by_tipo(
-                        condominio_id, periodo_db_conc, "ingreso"
+                        condominio_id,
+                        periodo_db_conc,
+                        "ingreso",
+                        with_propietario_embed=False,
                     )
                 except DatabaseError as e:
                     st.error(f"❌ {e}")
@@ -1010,12 +1056,7 @@ with tab_conciliacion:
             else:
                 for r in pendientes:
                     mid = int(r["id"])
-                    try:
-                        sug = repo_conciliacion.sugerir_vinculacion(
-                            mid, condominio_id, periodo_db_conc
-                        )
-                    except DatabaseError:
-                        sug = None
+                    sug = sugerir_vinculacion_desde_filas(r, pagos_reporte)
 
                     html_sug, _ = _fmt_sugerencia(sug)
                     ta = r.get("tipo_alerta") or "—"

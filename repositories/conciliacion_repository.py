@@ -9,6 +9,44 @@ from utils.conciliacion_match import sugerir_vinculacion_desde_filas
 from utils.error_handler import DatabaseError, safe_db_operation
 
 
+def compute_estado_periodo_desde_datos(
+    ingresos: list[dict], pagos_rows: list[dict]
+) -> dict:
+    """
+    Misma salida que ConciliacionRepository.obtener_estado_periodo sin nuevas consultas.
+    ``ingresos`` debe ser solo movimientos tipo ingreso del período (como get_by_tipo).
+    """
+    total_mov = len(ingresos)
+    conc = sum(1 for r in ingresos if r.get("conciliado"))
+    sin_con = total_mov - conc
+    saldo_banco = round(sum(float(r.get("monto_bs") or 0) for r in ingresos), 2)
+    saldo_sistema = round(sum(float(r.get("monto_bs") or 0) for r in pagos_rows), 2)
+
+    diferencia = round(saldo_banco - saldo_sistema, 2)
+    balance_estado = evaluar_estado_conciliacion(saldo_banco, saldo_sistema)
+    if balance_estado == "con_diferencias":
+        estado = "con_diferencias"
+    elif sin_con > 0 or any(
+        r.get("tipo_alerta") and not r.get("revisado") for r in ingresos
+    ):
+        estado = "pendiente"
+    else:
+        estado = "conciliado"
+
+    alertas = [r for r in ingresos if r.get("tipo_alerta")]
+
+    return {
+        "total_movimientos_banco": total_mov,
+        "total_conciliados": conc,
+        "total_sin_conciliar": sin_con,
+        "saldo_banco": saldo_banco,
+        "saldo_sistema": saldo_sistema,
+        "diferencia": diferencia,
+        "estado": estado,
+        "alertas": alertas,
+    }
+
+
 def query_pagos_por_ids(
     client: Client, condominio_id: int, pago_ids: list[int]
 ) -> dict[int, dict]:

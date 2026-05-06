@@ -27,8 +27,15 @@ class MovimientoRepository:
         periodo: str,
         tipo: str,
         estado: str | None = None,
+        *,
+        with_propietario_embed: bool = True,
     ) -> list[dict]:
-        sel = "*, conceptos(nombre), unidades(id, codigo, numero), propietarios(id, nombre)"
+        base = "*, conceptos(nombre), unidades(id, codigo, numero)"
+        sel = (
+            f"{base}, propietarios(id, nombre)"
+            if with_propietario_embed
+            else base
+        )
         query = (
             self.client.table(self.table)
             .select(sel)

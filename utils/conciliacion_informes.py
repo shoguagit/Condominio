@@ -178,15 +178,10 @@ def _fila_pendiente_tabla(
         elif estado_ced == "sin_propietario":
             expl = (
                 "Validación: la cédula del movimiento no está registrada como "
-                "propietario en este condominio. Cree o actualice el propietario "
-                "antes de registrar el cobro en Pagos."
+                "propietario en este condominio"
             )
         elif estado_ced == "sin_unidad":
-            expl = (
-                "Validación: el propietario existe pero no tiene unidad activa "
-                "vinculada. Revise Unidades / Propietarios y asigne la unidad "
-                "correcta antes de registrar el pago."
-            )
+            expl = "Validación: propietario sin unidad activa vinculada"
         else:
             expl = expl_std
     else:
